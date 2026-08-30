@@ -30,6 +30,21 @@ bool initBeforeCalled = false;
 bool initAfterCalled = false;
 bool stopCalled = false;
 
+namespace {
+std::atomic<bool> reallocCallbackEntered {false};
+std::atomic<bool> releaseReallocCallback {false};
+void* reallocCallbackResult = nullptr;
+
+void* blockingRealloc(void*, size_t)
+{
+    reallocCallbackEntered.store(true, std::memory_order_release);
+    while (!releaseReallocCallback.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    return reallocCallbackResult;
+}
+}
+
 using namespace std;
 
 TEST_CASE ("api") {
@@ -88,6 +103,42 @@ TEST_CASE ("api") {
             heaptrack_malloc(data, 4);
             heaptrack_realloc(data, 8, data);
             heaptrack_realloc(data, 16, data + 1);
+            heaptrack_free(data + 1);
+        }
+
+        SUBCASE("realloc serializes address reuse")
+        {
+            reallocCallbackEntered.store(false, memory_order_relaxed);
+            releaseReallocCallback.store(false, memory_order_relaxed);
+            reallocCallbackResult = data + 1;
+            heaptrack_malloc(data, sizeof(data[0]));
+
+            auto reallocator = async(launch::async, [&]() {
+                return heaptrack_realloc_locked(data, sizeof(data[1]), &blockingRealloc);
+            });
+            while (!reallocCallbackEntered.load(memory_order_acquire)) {
+                this_thread::yield();
+            }
+
+            atomic<bool> allocatorStarted {false};
+            atomic<bool> reusedAddressRecorded {false};
+            auto allocator = async(launch::async, [&]() {
+                allocatorStarted.store(true, memory_order_release);
+                heaptrack_malloc(data, sizeof(data[0]));
+                reusedAddressRecorded.store(true, memory_order_release);
+            });
+            while (!allocatorStarted.load(memory_order_acquire)) {
+                this_thread::yield();
+            }
+            this_thread::sleep_for(chrono::milliseconds(20));
+            const bool wasSerialized = !reusedAddressRecorded.load(memory_order_acquire);
+
+            releaseReallocCallback.store(true, memory_order_release);
+            REQUIRE(reallocator.get() == data + 1);
+            allocator.get();
+            REQUIRE(wasSerialized);
+            REQUIRE(reusedAddressRecorded.load(memory_order_acquire));
+            heaptrack_free(data);
             heaptrack_free(data + 1);
         }
 

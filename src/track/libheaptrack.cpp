@@ -303,7 +303,7 @@ int createFile(const char* fileName)
         fprintf(stderr, "ERROR: failed to open heaptrack output file %s: %s (%d)\n", outputFileName.c_str(),
                 strerror(errno), errno);
     } else if (lockFile(out) != 0) {
-#ifdef __FreeBSD__
+#if defined(__FreeBSD__) || defined(__APPLE__)
         // pipes do not support flock, create a regular file
         auto lockpath = outputFileName + ".lock";
         auto lockfile = open(lockpath.c_str(), O_CREAT | O_WRONLY | O_CLOEXEC, 0644);
@@ -353,7 +353,7 @@ public:
     {
         debugLog<VeryVerboseOutput>("%s", "releasing lock");
 
-        s_lock.unlock();
+        lock().unlock();
     }
 
     void initialize(const char* fileName, heaptrack_callback_t initBeforeCallback,
@@ -720,13 +720,13 @@ private:
 #else
     static void dyldImageAdded(const mach_header* header, intptr_t slide)
     {
-        s_moduleCache.addImage(header, slide);
+        moduleCache().addImage(header, slide);
         s_moduleCacheDirty.store(true, memory_order_relaxed);
     }
 
     static void dyldImageRemoved(const mach_header* header, intptr_t /*slide*/)
     {
-        s_moduleCache.removeImage(header);
+        moduleCache().removeImage(header);
         s_moduleCacheDirty.store(true, memory_order_relaxed);
     }
 
@@ -745,7 +745,7 @@ private:
 
     bool writeMachModules()
     {
-        return s_moduleCache.forEach(&writeMachModule, this);
+        return moduleCache().forEach(&writeMachModule, this);
     }
 #endif
 
@@ -825,7 +825,7 @@ private:
     static LockStatus tryLock(StopLockCheck stopLockCheck)
     {
         debugLog<VeryVerboseOutput>("%s", "trying to acquire lock");
-        while (!s_lock.try_lock()) {
+        while (!lock().try_lock()) {
             if (stopLockCheck()) {
                 return false;
             }
@@ -942,23 +942,29 @@ private:
 #endif
     };
 
-    static std::mutex s_lock;
     static LockedData* s_data;
     static std::atomic<bool> s_moduleCacheDirty;
-#ifdef __APPLE__
-    static MachModuleCache s_moduleCache;
-#endif
 
 private:
+    static std::mutex& lock()
+    {
+        static std::mutex instance;
+        return instance;
+    }
+
+#ifdef __APPLE__
+    static MachModuleCache& moduleCache()
+    {
+        static MachModuleCache instance;
+        return instance;
+    }
+#endif
+
     static std::atomic<bool> s_paused;
 };
 
-std::mutex HeapTrack::s_lock;
 HeapTrack::LockedData* HeapTrack::s_data {nullptr};
 std::atomic<bool> HeapTrack::s_moduleCacheDirty {true};
-#ifdef __APPLE__
-MachModuleCache HeapTrack::s_moduleCache;
-#endif
 std::atomic<bool> HeapTrack::s_paused {false};
 }
 
@@ -1059,6 +1065,38 @@ void heaptrack_realloc(void* ptr_in, size_t size, void* ptr_out)
 void heaptrack_realloc2(uintptr_t ptr_in, size_t size, uintptr_t ptr_out)
 {
     heaptrack_realloc_impl(reinterpret_cast<void*>(ptr_in), size, reinterpret_cast<void*>(ptr_out));
+}
+
+void* heaptrack_realloc_locked(void* ptr_in, size_t size, heaptrack_realloc_callback_t callback)
+{
+    if (!callback) {
+        return nullptr;
+    }
+    if (HeapTrack::isPaused() || RecursionGuard::isActive()) {
+        return callback(ptr_in, size);
+    }
+
+    RecursionGuard guard;
+    Trace trace;
+    trace.fill(2 + HEAPTRACK_DEBUG_BUILD * 3);
+
+    void* ptr_out = nullptr;
+    bool callbackCalled = false;
+    const auto recorded = HeapTrack::op(guard, [&](HeapTrack& heaptrack) {
+        ptr_out = callback(ptr_in, size);
+        callbackCalled = true;
+        if (!ptr_out) {
+            return;
+        }
+        if (ptr_in) {
+            heaptrack.handleFree(ptr_in);
+        }
+        heaptrack.handleMalloc(ptr_out, size, trace);
+    });
+    if (!recorded && !callbackCalled) {
+        ptr_out = callback(ptr_in, size);
+    }
+    return ptr_out;
 }
 
 void heaptrack_invalidate_module_cache(heaptrack_invalidate_module_cache_callback callback)

@@ -42,12 +42,14 @@ set_target_properties(heaptrack_env PROPERTIES
 if (APPLE)
     set(HEAPTRACK_PRELOAD_LIBRARY_TYPE SHARED)
     set(HEAPTRACK_PLATFORM_SOURCES machmodulecache.cpp)
+    set(HEAPTRACK_PRELOAD_SOURCE heaptrack_interpose.cpp)
 else()
     set(HEAPTRACK_PRELOAD_LIBRARY_TYPE MODULE)
+    set(HEAPTRACK_PRELOAD_SOURCE heaptrack_preload.cpp)
 endif()
 
 add_library(heaptrack_preload ${HEAPTRACK_PRELOAD_LIBRARY_TYPE}
-    heaptrack_preload.cpp
+    ${HEAPTRACK_PRELOAD_SOURCE}
     libheaptrack.cpp
     ${HEAPTRACK_PLATFORM_SOURCES}
 )

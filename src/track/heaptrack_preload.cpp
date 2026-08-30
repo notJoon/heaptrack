@@ -212,6 +212,21 @@ void init()
         },
         nullptr, nullptr);
 }
+
+void* callOriginalRealloc(void* ptr, size_t size)
+{
+    return hooks::realloc(ptr, size);
+}
+
+void* callOriginalMiRealloc(void* ptr, size_t size)
+{
+    return hooks::mi_realloc(ptr, size);
+}
+
+void* callOriginalGcRealloc(void* ptr, size_t size)
+{
+    return hooks::GC_realloc(ptr, size);
+}
 }
 }
 
@@ -254,13 +269,7 @@ void* realloc(void* ptr, size_t size) LIBC_FUN_ATTRS
         hooks::init();
     }
 
-    void* ret = hooks::realloc(ptr, size);
-
-    if (ret) {
-        heaptrack_realloc(ptr, size, ret);
-    }
-
-    return ret;
+    return heaptrack_realloc_locked(ptr, size, &hooks::callOriginalRealloc);
 }
 
 void* calloc(size_t num, size_t size) LIBC_FUN_ATTRS
@@ -405,13 +414,7 @@ void* mi_realloc(void* ptr, size_t size) LIBC_FUN_ATTRS
         hooks::init();
     }
 
-    void* ret = hooks::mi_realloc(ptr, size);
-
-    if (ret) {
-        heaptrack_realloc(ptr, size, ret);
-    }
-
-    return ret;
+    return heaptrack_realloc_locked(ptr, size, &hooks::callOriginalMiRealloc);
 }
 
 void* mi_calloc(size_t num, size_t size) LIBC_FUN_ATTRS
@@ -464,13 +467,7 @@ void* GC_realloc(void* ptr, size_t size) LIBC_FUN_ATTRS
         hooks::init();
     }
 
-    void* ret = hooks::GC_realloc(ptr, size);
-
-    if (ret) {
-        heaptrack_realloc(ptr, size, ret);
-    }
-
-    return ret;
+    return heaptrack_realloc_locked(ptr, size, &hooks::callOriginalGcRealloc);
 }
 
 void GC_free_profiler_hook(void* ptr) LIBC_FUN_ATTRS

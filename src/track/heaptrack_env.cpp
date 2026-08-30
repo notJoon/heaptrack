@@ -11,17 +11,19 @@
 #include <dlfcn.h>
 
 extern "C" {
+#if defined(__GLIBC__)
 __attribute__((weak)) void* __libc_dlopen_mode(const char* filename, int flag);
+#endif
 }
 
 namespace {
 void dlopenLine(const char* lib)
 {
-#ifdef __FreeBSD__
+#if defined(__FreeBSD__)
 
     fprintf(stdout, "'dlopen@plt'(\"%s\", 0x%x)\n", lib, RTLD_NOW);
 
-#else
+#elif defined(__GLIBC__)
 
     if (&__libc_dlopen_mode) {
         // __libc_dlopen_mode was available directly in glibc before libdl got merged into it
@@ -35,6 +37,8 @@ void dlopenLine(const char* lib)
     fprintf(stdout, "dlopen(\"%s\", 0x%x)\n", lib, RTLD_NOW);
 #endif
 
+#else
+    fprintf(stdout, "dlopen(\"%s\", 0x%x)\n", lib, RTLD_NOW);
 #endif
 }
 }

@@ -50,6 +50,19 @@ add_test(NAME tst_trace COMMAND tst_trace)
 configure_file(tst_heaptrack_interpret.cmake.sh ${CMAKE_CURRENT_BINARY_DIR}/tst_heaptrack_interpret.sh @ONLY)
 add_test(NAME tst_heaptrack_interpret COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tst_heaptrack_interpret.sh)
 
+if (APPLE)
+    add_executable(tst_macos_preload_client tst_macos_preload_client.c)
+    set_target_properties(tst_macos_preload_client PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/${BIN_INSTALL_DIR}"
+    )
+    configure_file(tst_macos_preload.cmake.sh ${CMAKE_CURRENT_BINARY_DIR}/tst_macos_preload.sh @ONLY)
+    add_test(NAME tst_macos_preload COMMAND /bin/sh ${CMAKE_CURRENT_BINARY_DIR}/tst_macos_preload.sh)
+    configure_file(tst_macos_launcher.cmake.sh ${CMAKE_CURRENT_BINARY_DIR}/tst_macos_launcher.sh @ONLY)
+    add_test(NAME tst_macos_launcher COMMAND /bin/sh ${CMAKE_CURRENT_BINARY_DIR}/tst_macos_launcher.sh)
+    set_tests_properties(tst_macos_preload tst_macos_launcher PROPERTIES TIMEOUT 30)
+    add_dependencies(tst_macos_preload_client heaptrack_preload heaptrack_env)
+endif()
+
 if (Boost_FILESYSTEM_FOUND)
     if (NOT APPLE)
         set(HEAPTRACK_TEST_RT_LIBRARY rt)

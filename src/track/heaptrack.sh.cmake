@@ -11,7 +11,7 @@ usage() {
     echo "or:    $0 [--debug|-d] -p PID"
     echo "or:    $0 -a FILE"
     echo
-    echo "A heap memory usage profiler. It uses LD_PRELOAD to track all"
+    echo "A heap memory usage profiler. It uses the dynamic loader to track all"
     echo "calls to the core memory allocation functions and logs these"
     echo "occurrences. Additionally, backtraces are obtained and logged."
     echo "Combined this can give interesting answers to questions such as:"
@@ -77,18 +77,34 @@ asan=
 asan_ld_preload=
 quiet=
 output=
+platform="@CMAKE_SYSTEM_NAME@"
+
+resolve_path() {
+    path="$1"
+    if resolved=$(readlink -f "$path" 2> /dev/null) && [ -n "$resolved" ]; then
+        printf '%s\n' "$resolved"
+    elif [ -e "$path" ] && command -v realpath > /dev/null 2>&1; then
+        realpath "$path"
+    elif [ -e "$path" ] && command -v perl > /dev/null 2>&1; then
+        perl -MCwd=abs_path -e 'print abs_path(shift)' "$path"
+    else
+        directory=$(dirname "$path")
+        filename=$(basename "$path")
+        printf '%s/%s\n' "$(cd "$directory" && pwd -P)" "$filename"
+    fi
+}
 
 # path to current heaptrack.sh executable
-SCRIPT_PATH=$(readlink -f "$0")
+SCRIPT_PATH=$(resolve_path "$0")
 SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
-EXE_PATH=$(readlink -f "$SCRIPT_DIR")
+EXE_PATH=$(resolve_path "$SCRIPT_DIR")
 
 # find preload library and interpreter executable using relative paths
 LIB_REL_PATH="@LIB_REL_PATH@"
 LIBEXEC_REL_PATH="@LIBEXEC_REL_PATH@"
 
 INTERPRETER="$EXE_PATH/$LIBEXEC_REL_PATH/heaptrack_interpret"
-INTERPRETER=$(readlink -f "$INTERPRETER")
+INTERPRETER=$(resolve_path "$INTERPRETER")
 
 GZ_COMPRESSOR="gzip -c"
 GZ_UNCOMPRESSOR="gzip -dc"
@@ -162,6 +178,10 @@ while true; do
             shift 1
             ;;
         "--use-inject")
+            if [ "$platform" = "Darwin" ]; then
+                echo "heaptrack: --use-inject is not supported on macOS" >&2
+                exit 1
+            fi
             use_inject_lib=1
             shift 1
             ;;
@@ -170,6 +190,10 @@ while true; do
             shift 1
             ;;
         "--asan")
+            if [ "$platform" = "Darwin" ]; then
+                echo "heaptrack: --asan is not supported on macOS" >&2
+                exit 1
+            fi
             asan=1
             use_inject_lib=1
             shift 1
@@ -187,18 +211,23 @@ while true; do
                 echo "Missing output argument."
                 exit 1
             fi
-            output=$(echo $2 | sed "s/%h/$(hostname)/g" | sed "s/%p/$$/g")
+            output=$(printf '%s\n' "$2" | sed "s/%h/$(hostname)/g" | sed "s/%p/$$/g")
             if [ -d "$output" ]; then
                 echo "Please specify a file-name or a full path-name for output."
                 exit 1
             fi
-            if [ ! -d $(dirname $output) ]; then
-              mkdir -p $(dirname $output)
+            output_directory=$(dirname "$output")
+            if [ ! -d "$output_directory" ]; then
+              mkdir -p "$output_directory"
             fi
-            output=$(readlink -f $output)
+            output=$(resolve_path "$output")
             shift 2
             ;;
         "-p" | "--pid")
+            if [ "$platform" = "Darwin" ]; then
+                echo "heaptrack: --pid is not supported on macOS" >&2
+                exit 1
+            fi
             if [ -z "$(command -v gdb 2> /dev/null)" ]; then
                 echo "GDB is not installed, cannot attach to running process."
                 exit 1
@@ -291,29 +320,32 @@ if [ ! -f "$ENVCHECKER" ]; then
     echo "Could not find heaptrack_env: $ENVCHECKER"
     exit 1
 fi
-ENVCHECKER=$(readlink -f "$ENVCHECKER")
+ENVCHECKER=$(resolve_path "$ENVCHECKER")
 
 if [ -z "$use_inject_lib" ]; then
-    LIBHEAPTRACK_PRELOAD="$EXE_PATH/$LIB_REL_PATH/libheaptrack_preload.so"
+    LIBHEAPTRACK_PRELOAD="$EXE_PATH/$LIB_REL_PATH/libheaptrack_preload@CMAKE_SHARED_LIBRARY_SUFFIX@"
 else
-    LIBHEAPTRACK_PRELOAD="$EXE_PATH/$LIB_REL_PATH/libheaptrack_inject.so"
+    LIBHEAPTRACK_PRELOAD="$EXE_PATH/$LIB_REL_PATH/libheaptrack_inject@CMAKE_SHARED_LIBRARY_SUFFIX@"
 fi
 if [ ! -f "$LIBHEAPTRACK_PRELOAD" ]; then
     echo "Could not find heaptrack preload library $LIBHEAPTRACK_PRELOAD"
     exit 1
 fi
-LIBHEAPTRACK_PRELOAD=$(readlink -f "$LIBHEAPTRACK_PRELOAD")
+LIBHEAPTRACK_PRELOAD=$(resolve_path "$LIBHEAPTRACK_PRELOAD")
 
-LIBHEAPTRACK_INJECT="$EXE_PATH/$LIB_REL_PATH/libheaptrack_inject.so"
-if [ ! -f "$LIBHEAPTRACK_INJECT" ]; then
-    echo "Could not find heaptrack inject library $LIBHEAPTRACK_INJECT"
-    exit 1
+LIBHEAPTRACK_INJECT=
+if [ "$platform" != "Darwin" ]; then
+    LIBHEAPTRACK_INJECT="$EXE_PATH/$LIB_REL_PATH/libheaptrack_inject@CMAKE_SHARED_LIBRARY_SUFFIX@"
+    if [ ! -f "$LIBHEAPTRACK_INJECT" ]; then
+        echo "Could not find heaptrack inject library $LIBHEAPTRACK_INJECT"
+        exit 1
+    fi
+    LIBHEAPTRACK_INJECT=$(resolve_path "$LIBHEAPTRACK_INJECT")
 fi
-LIBHEAPTRACK_INJECT=$(readlink -f "$LIBHEAPTRACK_INJECT")
 
 if [ -n "$asan" ]; then
   # We need to check the actual path to the binary
-  bin_path=$(readlink -f /proc/$pid/exe)
+  bin_path=$(resolve_path "/proc/$pid/exe")
   asan_ld_preload=$(ldd $bin_path | grep libasan | sed -e 's/.*=> //;s/ (.*//')
   if [ -z "$asan_ld_preload" ]; then
     echo "Unable to detect libasan when running ldd on the executable $client"
@@ -323,9 +355,43 @@ if [ -n "$asan" ]; then
   asan_ld_preload="$asan_ld_preload:"
 fi
 
-# setup named pipe to read data from
-pipe=/tmp/heaptrack_fifo$$
-mkfifo $pipe
+# Set up private IPC paths. The early trap covers every failure after this point.
+runtime_dir=
+pipe=
+ready_file=
+interpreted_pipe=
+background_pids=
+
+cleanup_runtime() {
+    for background_pid in $background_pids; do
+        kill "$background_pid" 2> /dev/null || true
+    done
+    [ -n "$pipe" ] && rm -f "$pipe" "$pipe.lock"
+    [ -n "$ready_file" ] && rm -f "$ready_file"
+    [ -n "$interpreted_pipe" ] && rm -f "$interpreted_pipe"
+    [ -n "$runtime_dir" ] && rmdir "$runtime_dir" 2> /dev/null || true
+}
+
+old_umask=$(umask)
+umask 077
+runtime_dir=$(mktemp -d "${TMPDIR:-/tmp}/heaptrack.XXXXXX") || {
+    umask "$old_umask"
+    echo "heaptrack: failed to create a private runtime directory" >&2
+    exit 1
+}
+trap cleanup_runtime EXIT INT TERM
+
+pipe="$runtime_dir/data"
+if ! mkfifo "$pipe"; then
+    umask "$old_umask"
+    echo "heaptrack: failed to create the tracking FIFO" >&2
+    exit 1
+fi
+if [ "$platform" = "Darwin" ]; then
+    ready_file="$runtime_dir/ready"
+    : > "$ready_file"
+fi
+umask "$old_umask"
 
 # if root is profiling a process for non root
 # give profiled process write access to the pipe
@@ -337,11 +403,14 @@ if [ ! -z "$pid" ]; then
     FreeBSD*)
       pid_user=$(stat -f %Su "/proc/$pid")
     ;;
+    Darwin*)
+      pid_user=$(stat -f %u "/proc/$pid")
+    ;;
   esac
   if [ -z "$pid_user" ]; then
     exit 1
   fi
-  chown "$pid_user" "$pipe" || exit 1
+  chown "$pid_user" "$runtime_dir" "$pipe" || exit 1
 fi
 
 output_suffix="gz"
@@ -368,18 +437,25 @@ if [ -z "$write_raw_data" ]; then
         echo "Could not find heaptrack interpreter executable: $INTERPRETER"
         exit 1
     fi
-    "$INTERPRETER" < $pipe | $COMPRESSOR > "$output" &
+    interpreted_pipe="$runtime_dir/interpreted"
+    if ! mkfifo "$interpreted_pipe"; then
+        echo "heaptrack: failed to create the interpreter FIFO" >&2
+        exit 1
+    fi
+    $COMPRESSOR < "$interpreted_pipe" > "$output" &
+    compressor_pid=$!
+    background_pids="$compressor_pid"
+    "$INTERPRETER" < "$pipe" > "$interpreted_pipe" &
+    interpreter_pid=$!
+    background_pids="$interpreter_pid $compressor_pid"
 else
-    $COMPRESSOR < $pipe > "$output" &
+    $COMPRESSOR < "$pipe" > "$output" &
+    compressor_pid=$!
+    background_pids="$compressor_pid"
 fi
-debuggee=$!
 
 cleanup() {
-    # Not run for the second time
-    # (bash calls "trap ... INT EXIT" two times when interrupted)
-    cleanup() {
-      :
-    }
+    trap - EXIT INT TERM
     if [ ! -z "$pid" ] && [ -d "/proc/$pid" ]; then
         echo "removing heaptrack injection via GDB, this might take some time..."
         gdb --batch-silent -n -iex="set auto-solib-add off" \
@@ -390,13 +466,7 @@ cleanup() {
         # NOTE: we do not call dlclose here, as that has the tendency to trigger
         #       crashes in the debuggee. So instead, we keep heaptrack loaded.
     fi
-    rm -f "$pipe"
-    case $(uname) in
-        FreeBSD*)
-            rm -f "$pipe.lock"
-        ;;
-    esac
-    kill "$debuggee" 2> /dev/null
+    cleanup_runtime
 
     if [ -z ${quiet} ]; then
       echo "Heaptrack finished! Now run the following to investigate the data:"
@@ -432,15 +502,27 @@ if [ -z "$debug" ] && [ -z "$pid" ]; then
   if [ -z ${quiet} ]; then
     echo "starting application, this might take some time..."
   fi
-  LD_PRELOAD="$asan_ld_preload$LIBHEAPTRACK_PRELOAD${LD_PRELOAD:+:$LD_PRELOAD}" DUMP_HEAPTRACK_OUTPUT="$pipe" "$client" "$@"
+  if [ "$platform" = "Darwin" ]; then
+    DYLD_INSERT_LIBRARIES="$LIBHEAPTRACK_PRELOAD${DYLD_INSERT_LIBRARIES:+:$DYLD_INSERT_LIBRARIES}" \
+      DUMP_HEAPTRACK_OUTPUT="$pipe" DUMP_HEAPTRACK_READY="$ready_file" "$client" "$@"
+  else
+    LD_PRELOAD="$asan_ld_preload$LIBHEAPTRACK_PRELOAD${LD_PRELOAD:+:$LD_PRELOAD}" \
+      DUMP_HEAPTRACK_OUTPUT="$pipe" "$client" "$@"
+  fi
   EXIT_CODE=$?
 else
   if [ -z "$pid" ]; then
     if [ -z ${quiet} ]; then
       echo "starting application in GDB, this might take some time..."
     fi
-    gdb --quiet --eval-command="set environment LD_PRELOAD=$LIBHEAPTRACK_PRELOAD" \
+    if [ "$platform" = "Darwin" ]; then
+      preload_environment="DYLD_INSERT_LIBRARIES"
+    else
+      preload_environment="LD_PRELOAD"
+    fi
+    gdb --quiet --eval-command="set environment $preload_environment=$LIBHEAPTRACK_PRELOAD" \
         --eval-command="set environment DUMP_HEAPTRACK_OUTPUT=$pipe" \
+        --eval-command="set environment DUMP_HEAPTRACK_READY=$ready_file" \
         --eval-command="set startup-with-shell off" \
         --eval-command="run" --args "$client" "$@"
     EXIT_CODE=$?
@@ -473,7 +555,24 @@ else
   fi
 fi
 
-wait $debuggee
+if [ "$platform" = "Darwin" ] && [ -z "$pid" ] && [ ! -s "$ready_file" ]; then
+  echo "heaptrack: macOS ignored DYLD_INSERT_LIBRARIES; System Integrity Protection may block this executable" >&2
+  cleanup_runtime
+  EXIT_CODE=1
+fi
+
+background_exit_code=0
+for background_pid in $background_pids; do
+  wait "$background_pid"
+  wait_status=$?
+  if [ "$wait_status" -ne 0 ]; then
+    background_exit_code=$wait_status
+  fi
+done
+background_pids=
+if [ "$EXIT_CODE" -eq 0 ] && [ "$background_exit_code" -ne 0 ]; then
+  EXIT_CODE=$background_exit_code
+fi
 exit $EXIT_CODE
 
 # kate: hl Bash
