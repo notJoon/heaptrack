@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [macos-native]
+  pull_request:
+    branches: [macos-native]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS 14 (arm64)
+    runs-on: macos-14
+
+    env:
+      BASELINE_ARTIFACTS: >-
+        bin/heaptrack_print
+        lib/heaptrack/libheaptrack_preload.dylib
+      BASELINE_TESTS: tst_trace|tst_io|tst_libheaptrack
+      PROGRESS_ARTIFACTS: >-
+        lib/heaptrack/libexec/heaptrack_interpret
+        lib/heaptrack/libexec/heaptrack_env
+        tests/manual/signals
+        bin/tst_inject
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install boost ninja zstd
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DHEAPTRACK_BUILD_GUI=OFF
+
+      - name: Build
+        id: build
+        continue-on-error: true
+        run: cmake --build build -- -k 0
+
+      - name: Test
+        id: test
+        continue-on-error: true
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Smoke test
+        id: smoke
+        continue-on-error: true
+        run: |
+          ./build/bin/heaptrack_print tests/auto/heaptrack.david.18594.gz > print.out
+          grep -q "MOST CALLS TO ALLOCATION FUNCTIONS" print.out
+
+      - name: Report status
+        run: |
+          {
+            echo "| artifact | status | tier |"
+            echo "|---|---|---|"
+            for a in $BASELINE_ARTIFACTS; do
+              [ -e "build/$a" ] && s=ok || s=MISSING
+              echo "| \`$a\` | $s | baseline |"
+            done
+            for a in $PROGRESS_ARTIFACTS; do
+              [ -e "build/$a" ] && s=ok || s=pending
+              echo "| \`$a\` | $s | progress |"
+            done
+            echo
+            echo "build: ${{ steps.build.outcome }} / test: ${{ steps.test.outcome }} / smoke: ${{ steps.smoke.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Gate on baseline
+        run: |
+          fail=0
+          for a in $BASELINE_ARTIFACTS; do
+            if [ ! -e "build/$a" ]; then
+              echo "::error::missing baseline artifact: $a"
+              fail=1
+            fi
+          done
+          ctest --test-dir build -R "$BASELINE_TESTS" --output-on-failure || fail=1
+          [ "${{ steps.smoke.outcome }}" = success ] || fail=1
+          exit $fail
+
+  linux:
+    name: Linux
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build libunwind-dev libelf-dev libdw-dev zlib1g-dev libzstd-dev \
+            libboost-iostreams-dev libboost-program-options-dev \
+            libboost-filesystem-dev libboost-container-dev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DHEAPTRACK_BUILD_GUI=OFF
+
+      - name: Build
+        run: cmake --build build -- -k 0
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
