@@ -28,16 +28,22 @@ if (ECM_FOUND)
     include(ECMEnableSanitizers)
 endif()
 
-add_executable(tst_trace tst_trace.cpp ../../src/interpret/dwarfdiecache.cpp ../../src/interpret/demangler.cpp)
+if (APPLE)
+    add_executable(tst_trace tst_trace.cpp)
+else()
+    add_executable(tst_trace tst_trace.cpp ../../src/interpret/dwarfdiecache.cpp ../../src/interpret/demangler.cpp)
+endif()
 set_target_properties(tst_trace PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/${BIN_INSTALL_DIR}")
 target_link_libraries(tst_trace
     PRIVATE
         heaptrack_unwind
         Threads::Threads
-        ${LIBDW_LIBRARIES}
         tsl::robin_map
 )
-target_include_directories(tst_trace PRIVATE ${LIBDW_INCLUDE_DIRS} )
+if (NOT APPLE)
+    target_link_libraries(tst_trace PRIVATE ${LIBDW_LIBRARIES})
+    target_include_directories(tst_trace PRIVATE ${LIBDW_INCLUDE_DIRS})
+endif()
 
 add_test(NAME tst_trace COMMAND tst_trace)
 
@@ -45,9 +51,18 @@ configure_file(tst_heaptrack_interpret.cmake.sh ${CMAKE_CURRENT_BINARY_DIR}/tst_
 add_test(NAME tst_heaptrack_interpret COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tst_heaptrack_interpret.sh)
 
 if (Boost_FILESYSTEM_FOUND)
+    if (NOT APPLE)
+        set(HEAPTRACK_TEST_RT_LIBRARY rt)
+    endif()
+
     add_executable(tst_libheaptrack
         tst_libheaptrack.cpp
         ../../src/track/libheaptrack.cpp)
+    if (APPLE)
+        target_sources(tst_libheaptrack PRIVATE ../../src/track/machmodulecache.cpp)
+        target_compile_definitions(tst_libheaptrack PRIVATE HEAPTRACK_TEST_DYLIB="$<TARGET_FILE:testlib_indirect>")
+        add_dependencies(tst_libheaptrack testlib_indirect)
+    endif()
     set_target_properties(tst_libheaptrack PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/${BIN_INSTALL_DIR}")
     target_link_libraries(tst_libheaptrack
         LINK_PRIVATE
@@ -55,7 +70,7 @@ if (Boost_FILESYSTEM_FOUND)
             ${CMAKE_THREAD_LIBS_INIT}
             ${LIBUTIL_LIBRARY}
             heaptrack_unwind
-            rt
+            ${HEAPTRACK_TEST_RT_LIBRARY}
             ${Boost_FILESYSTEM_LIBRARY}
     )
     add_test(NAME tst_libheaptrack COMMAND tst_libheaptrack)

@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "dwarfdiecache.h"
+#include "rawmoduledata.h"
 #include "symbolcache.h"
 
 #include "util/config.h"
@@ -140,12 +141,13 @@ struct ResolvedIP
 struct ModuleFragment
 {
     ModuleFragment(string fileName, uintptr_t addressStart, uintptr_t fragmentStart, uintptr_t fragmentEnd,
-                   size_t moduleIndex)
-        : fileName(fileName)
+                   size_t moduleIndex, string uuid)
+        : fileName(std::move(fileName))
         , addressStart(addressStart)
         , fragmentStart(fragmentStart)
         , fragmentEnd(fragmentEnd)
         , moduleIndex(moduleIndex)
+        , uuid(std::move(uuid))
     {
     }
 
@@ -166,6 +168,7 @@ struct ModuleFragment
     uintptr_t fragmentStart;
     uintptr_t fragmentEnd;
     size_t moduleIndex;
+    string uuid;
 };
 
 struct Module
@@ -240,7 +243,7 @@ struct Module
         Dwarf_Files* files = nullptr;
         dwarf_getsrcfiles(cuDie->cudie(), &files, nullptr);
 
-        auto handleDie = [&](Dwarf_Die *scope, Dwarf_Die *prevScope) {
+        auto handleDie = [&](Dwarf_Die* scope, Dwarf_Die* prevScope) {
             const auto tag = dwarf_tag(prevScope);
             if (tag != DW_TAG_inlined_subroutine) {
                 error_out << "unexpected prev scope tag: " << std::hex << tag << '\n';
@@ -433,9 +436,9 @@ struct AccumulatedTraceData
     }
 
     void addModule(const string& fileName, const size_t moduleIndex, const uintptr_t addressStart,
-                   const uintptr_t fragmentStart, const uintptr_t fragmentEnd)
+                   const uintptr_t fragmentStart, const uintptr_t fragmentEnd, const string& uuid)
     {
-        m_moduleFragments.emplace_back(fileName, addressStart, fragmentStart, fragmentEnd, moduleIndex);
+        m_moduleFragments.emplace_back(fileName, addressStart, fragmentStart, fragmentEnd, moduleIndex, uuid);
         m_modulesDirty = true;
     }
 
@@ -651,12 +654,13 @@ int main(int argc, char** argv)
     PointerMap ptrToIndex;
     uint64_t lastPtr = 0;
     AllocationInfoSet allocationInfos;
+    unsigned int fileVersion = 0;
 
     while (reader.getLine(cin)) {
         if (reader.mode() == 'v') {
             unsigned int heaptrackVersion = 0;
             reader >> heaptrackVersion;
-            unsigned int fileVersion = 0;
+            fileVersion = 0;
             reader >> fileVersion;
             if (fileVersion >= 3) {
                 reader.setExpectedSizedStrings(true);
@@ -669,27 +673,24 @@ int main(int argc, char** argv)
             }
             reader >> exe;
         } else if (reader.mode() == 'm') {
-            string fileName;
-            reader >> fileName;
-            if (fileName == "-") {
+            RawModuleData module;
+            if (!parseRawModule(reader, fileVersion, module)) {
+                error_out << "failed to parse module line: " << reader.line() << endl;
+                return 1;
+            }
+            if (module.fileName == "-") {
                 data.clearModules();
             } else {
-                if (fileName == "x") {
-                    fileName = exe;
+                if (module.fileName == "x") {
+                    module.fileName = exe;
                 }
                 const char* internedString = nullptr;
-                const auto moduleIndex = data.intern(fileName, &internedString);
-                uintptr_t addressStart = 0;
-                if (!(reader >> addressStart)) {
-                    error_out << "failed to parse line: " << reader.line() << endl;
-                    return 1;
-                }
-                uintptr_t vAddr = 0;
-                uintptr_t memSize = 0;
-                const auto& resolvedFileName = data.resolveFile(fileName);
-                while ((reader >> vAddr) && (reader >> memSize)) {
-                    data.addModule(resolvedFileName, moduleIndex, addressStart, addressStart + vAddr,
-                                   addressStart + vAddr + memSize);
+                const auto moduleIndex = data.intern(module.fileName, &internedString);
+                const auto& resolvedFileName = data.resolveFile(module.fileName);
+                for (const auto& segment : module.segments) {
+                    data.addModule(resolvedFileName, moduleIndex, module.addressStart,
+                                   module.addressStart + segment.virtualAddress,
+                                   module.addressStart + segment.virtualAddress + segment.memorySize, module.uuid);
                 }
             }
         } else if (reader.mode() == 't') {

@@ -10,15 +10,15 @@
 #include "track/trace.h"
 #include "track/tracetree.h"
 
+#ifndef __APPLE__
 #include "interpret/dwarfdiecache.h"
-
 #include <elfutils/libdwelf.h>
+#include <link.h>
+#endif
 
 #include <algorithm>
 #include <future>
 #include <thread>
-
-#include <link.h>
 
 using namespace std;
 
@@ -175,6 +175,7 @@ TEST_CASE ("tracetree indexing") {
     }
 }
 
+#ifndef __APPLE__
 struct CallbackData
 {
     Dwfl* dwfl = nullptr;
@@ -185,7 +186,8 @@ static int dl_iterate_phdr_dwfl_report_callback(struct dl_phdr_info* info, size_
     const char* fileName = info->dlpi_name;
     if (!fileName || !fileName[0]) {
         auto callbackData = reinterpret_cast<CallbackData*>(data);
-        callbackData->mod = dwfl_report_elf(callbackData->dwfl, "tst_trace", "/proc/self/exe", -1, info->dlpi_addr, false);
+        callbackData->mod =
+            dwfl_report_elf(callbackData->dwfl, "tst_trace", "/proc/self/exe", -1, info->dlpi_addr, false);
         REQUIRE(callbackData->mod);
     }
 
@@ -209,7 +211,7 @@ TEST_CASE ("symbolizing") {
     REQUIRE(dwfl);
 
     dwfl_report_begin(dwfl.get());
-    CallbackData data = { dwfl.get(), nullptr };
+    CallbackData data = {dwfl.get(), nullptr};
     dl_iterate_phdr(&dl_iterate_phdr_dwfl_report_callback, &data);
     dwfl_report_end(dwfl.get(), nullptr, nullptr);
 
@@ -262,3 +264,4 @@ TEST_CASE ("symbolizing") {
         }
     }
 }
+#endif

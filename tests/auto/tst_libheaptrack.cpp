@@ -8,13 +8,19 @@
 #include "3rdparty/doctest.h"
 
 #include "track/libheaptrack.h"
+#ifdef __APPLE__
+#include "track/machmodulecache.h"
+#endif
 #include "util/linewriter.h"
 
 #include <cmath>
 #include <cstdio>
+#include <dlfcn.h>
 
+#include <atomic>
 #include <future>
 #include <iostream>
+#include <regex>
 #include <thread>
 #include <vector>
 
@@ -124,3 +130,118 @@ TEST_CASE ("api") {
         }
     }
 }
+
+#ifdef __APPLE__
+TEST_CASE ("Mach-O module cache snapshots") {
+    MachModuleCache cache;
+    const auto* header = _dyld_get_image_header(0);
+    REQUIRE(header);
+    REQUIRE(cache.addImage(header, _dyld_get_image_vmaddr_slide(0)));
+
+    struct Snapshot
+    {
+        size_t count = 0;
+        bool hasUuid = false;
+        bool hasText = false;
+    } snapshot;
+    REQUIRE(cache.forEach(
+        [](const MachModuleCache::Module& module, void* context) {
+            auto& snapshot = *static_cast<Snapshot*>(context);
+            ++snapshot.count;
+            snapshot.hasUuid = module.uuid[0] != '\0';
+            snapshot.hasText = module.textSize != 0;
+            return true;
+        },
+        &snapshot));
+    REQUIRE(snapshot.count == 1);
+    REQUIRE(snapshot.hasUuid);
+    REQUIRE(snapshot.hasText);
+
+    cache.removeImage(header);
+    snapshot = {};
+    REQUIRE(cache.forEach(
+        [](const MachModuleCache::Module&, void* context) {
+            ++static_cast<Snapshot*>(context)->count;
+            return true;
+        },
+        &snapshot));
+    REQUIRE(snapshot.count == 0);
+}
+
+TEST_CASE ("macOS process metadata") {
+    TempFile tmp;
+    heaptrack_init(tmp.fileName.c_str(), nullptr, nullptr, nullptr);
+
+    int data = 0;
+    heaptrack_malloc(&data, sizeof(data));
+    heaptrack_free(&data);
+
+    const auto module = dlopen(HEAPTRACK_TEST_DYLIB, RTLD_NOW | RTLD_LOCAL);
+    REQUIRE(module);
+    heaptrack_malloc(&data, sizeof(data));
+    heaptrack_free(&data);
+    REQUIRE(dlclose(module) == 0);
+    heaptrack_malloc(&data, sizeof(data));
+    heaptrack_free(&data);
+
+    heaptrack_stop();
+
+    const auto contents = tmp.readContents();
+    REQUIRE(regex_search(contents, regex("^v [0-9a-f]+ 4\\n")));
+    REQUIRE(contents.find("\nx ") != string::npos);
+    REQUIRE(contents.find("\nX ") != string::npos);
+    REQUIRE(contents.find("\nI ") != string::npos);
+    REQUIRE(contents.find("\nR ") != string::npos);
+
+    size_t moduleCacheResets = 0;
+    vector<string> moduleSnapshots;
+    for (auto offset = contents.find("\nm 1 -\n"); offset != string::npos;
+         offset = contents.find("\nm 1 -\n", offset + 1)) {
+        ++moduleCacheResets;
+        const auto next = contents.find("\nm 1 -\n", offset + 1);
+        moduleSnapshots.push_back(contents.substr(offset, next - offset));
+    }
+    REQUIRE(moduleCacheResets >= 3);
+    REQUIRE(moduleSnapshots.front().find("libtestlib_indirect.dylib") == string::npos);
+    REQUIRE(moduleSnapshots[moduleSnapshots.size() - 2].find("libtestlib_indirect.dylib") != string::npos);
+    REQUIRE(moduleSnapshots.back().find("libtestlib_indirect.dylib") == string::npos);
+
+    smatch moduleMatch;
+    const regex modulePattern(
+        "\\nm [0-9a-f]+ [^\\n]*libtestlib_indirect\\.dylib [0-9a-f]+ ([0-9a-f]{32}) [0-9a-f]+ [0-9a-f]+\\n");
+    REQUIRE(regex_search(contents, moduleMatch, modulePattern));
+    REQUIRE(moduleMatch[1].str() != "00000000000000000000000000000000");
+}
+
+TEST_CASE ("concurrent macOS module updates") {
+    TempFile tmp;
+    heaptrack_init(tmp.fileName.c_str(), nullptr, nullptr, nullptr);
+
+    atomic<bool> loaderStarted {false};
+    atomic<bool> loaderFinished {false};
+    atomic<bool> loaderSucceeded {true};
+
+    thread loader([&]() {
+        loaderStarted.store(true, memory_order_release);
+        for (int i = 0; i < 2000; ++i) {
+            const auto module = dlopen(HEAPTRACK_TEST_DYLIB, RTLD_NOW | RTLD_LOCAL);
+            if (!module || dlclose(module) != 0) {
+                loaderSucceeded.store(false, memory_order_relaxed);
+                break;
+            }
+        }
+        loaderFinished.store(true, memory_order_release);
+    });
+
+    while (!loaderStarted.load(memory_order_acquire)) { }
+    int data = 0;
+    while (!loaderFinished.load(memory_order_acquire)) {
+        heaptrack_malloc(&data, sizeof(data));
+        heaptrack_free(&data);
+    }
+
+    loader.join();
+    heaptrack_stop();
+    REQUIRE(loaderSucceeded.load(memory_order_relaxed));
+}
+#endif

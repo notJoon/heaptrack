@@ -7,7 +7,9 @@ install(PROGRAMS ${PROJECT_BINARY_DIR}/${BIN_INSTALL_DIR}/heaptrack
     DESTINATION ${BIN_INSTALL_DIR}
 )
 
-if (HEAPTRACK_USE_LIBUNWIND)
+if (APPLE)
+    add_library(heaptrack_unwind STATIC trace_macos.cpp)
+elseif (HEAPTRACK_USE_LIBUNWIND)
     add_library(heaptrack_unwind STATIC trace_libunwind.cpp)
     target_include_directories(heaptrack_unwind PRIVATE ${LIBUNWIND_INCLUDE_DIRS})
     target_link_libraries(heaptrack_unwind PRIVATE ${LIBUNWIND_LIBRARIES})
@@ -39,6 +41,7 @@ set_target_properties(heaptrack_env PROPERTIES
 # heaptrack_preload: track a newly started process
 if (APPLE)
     set(HEAPTRACK_PRELOAD_LIBRARY_TYPE SHARED)
+    set(HEAPTRACK_PLATFORM_SOURCES machmodulecache.cpp)
 else()
     set(HEAPTRACK_PRELOAD_LIBRARY_TYPE MODULE)
 endif()
@@ -46,6 +49,7 @@ endif()
 add_library(heaptrack_preload ${HEAPTRACK_PRELOAD_LIBRARY_TYPE}
     heaptrack_preload.cpp
     libheaptrack.cpp
+    ${HEAPTRACK_PLATFORM_SOURCES}
 )
 
 target_link_libraries(heaptrack_preload LINK_PRIVATE

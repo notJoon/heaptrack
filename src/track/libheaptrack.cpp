@@ -15,7 +15,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fcntl.h>
+#ifndef __APPLE__
 #include <link.h>
+#endif
 #include <pthread.h>
 #include <signal.h>
 #ifdef __linux__
@@ -29,7 +31,14 @@
 #include <sys/types.h>
 #include <sys/user.h>
 #endif
+#ifdef __APPLE__
+#include "machmodulecache.h"
+#include <crt_externs.h>
+#include <mach-o/dyld.h>
+#include <mach/mach.h>
+#endif
 #include <sys/file.h>
+#include <unistd.h>
 
 #include <atomic>
 #include <cinttypes>
@@ -48,11 +57,17 @@
 extern "C" {
 // see upstream "documentation" at:
 // https://github.com/llvm-mirror/compiler-rt/blob/master/include/sanitizer/lsan_interface.h#L76
+#ifdef __APPLE__
+__attribute__((weak_import)) const char* __lsan_default_suppressions();
+#else
 __attribute__((weak)) const char* __lsan_default_suppressions();
+#endif
 }
+#ifdef __GLIBCXX__
 namespace __gnu_cxx {
 __attribute__((weak)) extern void __freeres();
 }
+#endif
 
 /**
  * uncomment this to get extended debug code for known pointers
@@ -81,12 +96,16 @@ chrono::milliseconds elapsedTime()
     return chrono::duration_cast<chrono::milliseconds>(clock::now() - startTime());
 }
 
-pid_t gettid()
+uint64_t gettid()
 {
 #ifdef __linux__
-    return static_cast<pid_t>(syscall(SYS_gettid));
+    return static_cast<uint64_t>(syscall(SYS_gettid));
 #elif defined(__FreeBSD__)
-    return pthread_getthreadid_np();
+    return static_cast<uint64_t>(pthread_getthreadid_np());
+#elif defined(__APPLE__)
+    uint64_t threadId = 0;
+    pthread_threadid_np(nullptr, &threadId);
+    return threadId;
 #endif
 }
 
@@ -97,21 +116,75 @@ pid_t gettid()
 struct RecursionGuard
 {
     RecursionGuard()
-        : wasLocked(isActive)
+        : wasLocked(activate())
     {
-        isActive = true;
     }
 
     ~RecursionGuard()
     {
-        isActive = wasLocked;
+        setActive(wasLocked);
     }
 
     const bool wasLocked;
-    static thread_local bool isActive;
+    static bool isActive()
+    {
+#ifdef __APPLE__
+        return s_keyFailed.load(memory_order_acquire) || !s_keyReady.load(memory_order_acquire)
+            || pthread_getspecific(s_key) != nullptr;
+#else
+        return s_isActive;
+#endif
+    }
+
+    static void setActive(bool active)
+    {
+#ifdef __APPLE__
+        if (s_keyReady.load(memory_order_acquire)) {
+            if (pthread_setspecific(s_key, active ? reinterpret_cast<void*>(1) : nullptr) != 0) {
+                s_keyFailed.store(true, memory_order_release);
+            }
+        }
+#else
+        s_isActive = active;
+#endif
+    }
+
+private:
+    static bool activate()
+    {
+#ifdef __APPLE__
+        pthread_once(&s_keyOnce, &initializeKey);
+#endif
+        const auto wasActive = isActive();
+        setActive(true);
+        return wasActive;
+    }
+
+#ifdef __APPLE__
+    static void initializeKey()
+    {
+        if (pthread_key_create(&s_key, nullptr) == 0) {
+            s_keyReady.store(true, memory_order_release);
+        }
+    }
+
+    static pthread_key_t s_key;
+    static pthread_once_t s_keyOnce;
+    static atomic<bool> s_keyReady;
+    static atomic<bool> s_keyFailed;
+#else
+    static thread_local bool s_isActive;
+#endif
 };
 
-thread_local bool RecursionGuard::isActive = false;
+#ifdef __APPLE__
+pthread_key_t RecursionGuard::s_key;
+pthread_once_t RecursionGuard::s_keyOnce = PTHREAD_ONCE_INIT;
+atomic<bool> RecursionGuard::s_keyReady {false};
+atomic<bool> RecursionGuard::s_keyFailed {false};
+#else
+thread_local bool RecursionGuard::s_isActive = false;
+#endif
 
 enum DebugVerbosity
 {
@@ -136,9 +209,10 @@ inline void debugLog(Callback callback)
         RecursionGuard guard;
         flockfile(stderr);
         if (debugLevel == WarningOutput) {
-            fprintf(stderr, "heaptrack warning [%d:%d]@%" PRIu64 " ", getpid(), gettid(), elapsedTime().count());
+            fprintf(stderr, "heaptrack warning [%d:%" PRIu64 "]@%" PRIu64 " ", getpid(), gettid(),
+                    elapsedTime().count());
         } else {
-            fprintf(stderr, "heaptrack debug(%d) [%d:%d]@%" PRIu64 " ", debugLevel, getpid(), gettid(),
+            fprintf(stderr, "heaptrack debug(%d) [%d:%" PRIu64 "]@%" PRIu64 " ", debugLevel, getpid(), gettid(),
                     elapsedTime().count());
         }
         callback(stderr);
@@ -252,7 +326,7 @@ int createFile(const char* fileName)
  * Thread-Safe heaptrack API
  *
  * The only critical section in libheaptrack is the output of the data,
- * dl_iterate_phdr calls, as well as initialization and shutdown.
+ * module enumeration, as well as initialization and shutdown.
  */
 class HeapTrack
 {
@@ -308,6 +382,11 @@ public:
             // TODO: make this configurable
             pthread_atfork(&prepare_fork, &parent_fork, &child_fork);
 
+#ifdef __APPLE__
+            _dyld_register_func_for_remove_image(&dyldImageRemoved);
+            _dyld_register_func_for_add_image(&dyldImageAdded);
+#endif
+
             atexit([]() {
                 if (s_forceCleanup) {
                     return;
@@ -316,9 +395,11 @@ public:
 
                 // free internal libstdc++ resources
                 // see also Valgrind's `--run-cxx-freeres` option
+#ifdef __GLIBCXX__
                 if (&__gnu_cxx::__freeres) {
                     __gnu_cxx::__freeres();
                 }
+#endif
 
                 s_atexit.store(true);
                 heaptrack_stop();
@@ -335,6 +416,7 @@ public:
         }
 
         s_data = new LockedData(out, stopCallback);
+        s_moduleCacheDirty.store(true, memory_order_relaxed);
 
         writeVersion();
         writeExe();
@@ -380,7 +462,7 @@ public:
         if (!s_data) {
             return;
         }
-        s_data->moduleCacheDirty = true;
+        s_moduleCacheDirty.store(true, memory_order_relaxed);
     }
 
     void writeTimestamp()
@@ -435,6 +517,19 @@ public:
         rss = proc_info->ki_rssize;
 
         free(proc_info);
+#elif defined(__APPLE__)
+        mach_task_basic_info_data_t taskInfo = {};
+        mach_msg_type_number_t taskInfoCount = MACH_TASK_BASIC_INFO_COUNT;
+        if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, reinterpret_cast<task_info_t>(&taskInfo), &taskInfoCount)
+            != KERN_SUCCESS) {
+            return;
+        }
+
+        const auto pageSize = static_cast<size_t>(sysconf(_SC_PAGESIZE));
+        if (!pageSize) {
+            return;
+        }
+        rss = static_cast<size_t>(taskInfo.resident_size) / pageSize;
 #endif
 
         // TODO: compare to rusage.ru_maxrss (getrusage) to find "real" peak?
@@ -454,13 +549,22 @@ public:
     {
         const int BUF_SIZE = 1023;
         char buf[BUF_SIZE + 1];
+        size_t size = 0;
 
 #ifdef __linux__
-        ssize_t size = readlink("/proc/self/exe", buf, BUF_SIZE);
+        const auto bytesRead = readlink("/proc/self/exe", buf, BUF_SIZE);
+        if (bytesRead > 0) {
+            size = static_cast<size_t>(bytesRead);
+        }
 #elif defined(__FreeBSD__)
         int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1};
-        size_t size = BUF_SIZE;
+        size = BUF_SIZE;
         sysctl(mib, 4, buf, &size, NULL, 0);
+#elif defined(__APPLE__)
+        uint32_t bufferSize = sizeof(buf);
+        if (_NSGetExecutablePath(buf, &bufferSize) == 0) {
+            size = strlen(buf);
+        }
 #endif
 
         if (size > 0 && size < BUF_SIZE) {
@@ -472,6 +576,13 @@ public:
     void writeCommandLine()
     {
         s_data->out.write("X");
+#ifdef __APPLE__
+        const auto argc = *_NSGetArgc();
+        const auto argv = *_NSGetArgv();
+        for (int i = 0; i < argc; ++i) {
+            s_data->out.write(" %s", argv[i]);
+        }
+#else
         const int BUF_SIZE = 4096;
         char buf[BUF_SIZE + 1] = {0};
 
@@ -491,6 +602,7 @@ public:
             while (*p++)
                 ; // skip until start of next 0-terminated section
         }
+#endif
 
         s_data->out.write("\n");
     }
@@ -503,6 +615,9 @@ public:
 
     void writeSuppressions()
     {
+#ifdef __APPLE__
+        return;
+#else
         if (!__lsan_default_suppressions)
             return;
 
@@ -517,6 +632,7 @@ public:
             s_data->out.write(line);
             s_data->out.write("\n");
         }
+#endif
     }
 
     void handleMalloc(void* ptr, size_t size, const Trace& trace)
@@ -571,6 +687,7 @@ public:
     }
 
 private:
+#ifndef __APPLE__
     static int dl_iterate_phdr_callback(struct dl_phdr_info* info, size_t /*size*/, void* data)
     {
         auto heaptrack = reinterpret_cast<HeapTrack*>(data);
@@ -581,7 +698,7 @@ private:
 
         debugLog<VerboseOutput>("dlopen_notify_callback: %s %zx", fileName, info->dlpi_addr);
 
-        if (!heaptrack->s_data->out.write("m %x %s %zx", strlen(fileName), fileName, info->dlpi_addr)) {
+        if (!heaptrack->s_data->out.write("m %x %s %zx -", strlen(fileName), fileName, info->dlpi_addr)) {
             return 1;
         }
 
@@ -600,19 +717,50 @@ private:
 
         return 0;
     }
+#else
+    static void dyldImageAdded(const mach_header* header, intptr_t slide)
+    {
+        s_moduleCache.addImage(header, slide);
+        s_moduleCacheDirty.store(true, memory_order_relaxed);
+    }
+
+    static void dyldImageRemoved(const mach_header* header, intptr_t /*slide*/)
+    {
+        s_moduleCache.removeImage(header);
+        s_moduleCacheDirty.store(true, memory_order_relaxed);
+    }
+
+    static bool writeMachModule(const MachModuleCache::Module& module, void* context)
+    {
+        auto* heaptrack = static_cast<HeapTrack*>(context);
+        if (!heaptrack->s_data->out.write("m %x %s %zx %s", strlen(module.fileName), module.fileName, module.slide,
+                                          module.uuid)) {
+            return false;
+        }
+        if (module.textSize && !heaptrack->s_data->out.write(" %zx %zx", module.textAddress, module.textSize)) {
+            return false;
+        }
+        return heaptrack->s_data->out.write("\n");
+    }
+
+    bool writeMachModules()
+    {
+        return s_moduleCache.forEach(&writeMachModule, this);
+    }
+#endif
 
     static void prepare_fork()
     {
         debugLog<MinimalOutput>("%s", "prepare_fork()");
         // don't do any custom malloc handling while inside fork
-        RecursionGuard::isActive = true;
+        RecursionGuard::setActive(true);
     }
 
     static void parent_fork()
     {
         debugLog<MinimalOutput>("%s", "parent_fork()");
         // the parent process can now continue its custom malloc tracking
-        RecursionGuard::isActive = false;
+        RecursionGuard::setActive(false);
     }
 
     static void child_fork()
@@ -621,20 +769,28 @@ private:
         // but the forked child process cleans up itself
         // this is important to prevent two processes writing to the same file
         s_data = nullptr;
-        RecursionGuard::isActive = true;
+        RecursionGuard::setActive(true);
     }
 
     void updateModuleCache()
     {
-        if (!s_data || !s_data->out.canWrite() || !s_data->moduleCacheDirty) {
+        if (!s_data || !s_data->out.canWrite() || !s_moduleCacheDirty.exchange(false, memory_order_relaxed)) {
             return;
         }
         debugLog<MinimalOutput>("%s", "updateModuleCache()");
         if (!s_data->out.write("m 1 -\n")) {
+            s_moduleCacheDirty.store(true, memory_order_relaxed);
             return;
         }
-        dl_iterate_phdr(&dl_iterate_phdr_callback, this);
-        s_data->moduleCacheDirty = false;
+#ifdef __APPLE__
+        if (!writeMachModules()) {
+            s_moduleCacheDirty.store(true, memory_order_relaxed);
+        }
+#else
+        if (dl_iterate_phdr(&dl_iterate_phdr_callback, this) != 0) {
+            s_moduleCacheDirty.store(true, memory_order_relaxed);
+        }
+#endif
     }
 
     void writeError()
@@ -717,7 +873,7 @@ private:
 
             // the mask we set above will be inherited by the thread that we spawn below
             timerThread = std::thread([&]() {
-                RecursionGuard::isActive = true;
+                RecursionGuard::setActive(true);
                 debugLog<MinimalOutput>("%s", "timer thread started");
 
                 // now loop and repeatedly print the timestamp and RSS usage to the data stream
@@ -755,9 +911,11 @@ private:
 
             out.close();
 
+#ifdef __linux__
             if (procStatm != -1) {
                 close(procStatm);
             }
+#endif
 
             if (stopCallback && (!s_atexit || s_forceCleanup)) {
                 stopCallback();
@@ -767,17 +925,10 @@ private:
 
         LineWriter out;
 
+#ifdef __linux__
         /// /proc/self/statm file descriptor to read RSS value from
         int procStatm = -1;
-
-        /**
-         * Calls to dlopen/dlclose mark the cache as dirty.
-         * When this happened, all modules and their section addresses
-         * must be found again via dl_iterate_phdr before we output the
-         * next instruction pointer. Otherwise, heaptrack_interpret might
-         * encounter IPs of an unknown/invalid module.
-         */
-        bool moduleCacheDirty = true;
+#endif
 
         TraceTree traceTree;
 
@@ -793,6 +944,10 @@ private:
 
     static std::mutex s_lock;
     static LockedData* s_data;
+    static std::atomic<bool> s_moduleCacheDirty;
+#ifdef __APPLE__
+    static MachModuleCache s_moduleCache;
+#endif
 
 private:
     static std::atomic<bool> s_paused;
@@ -800,12 +955,16 @@ private:
 
 std::mutex HeapTrack::s_lock;
 HeapTrack::LockedData* HeapTrack::s_data {nullptr};
+std::atomic<bool> HeapTrack::s_moduleCacheDirty {true};
+#ifdef __APPLE__
+MachModuleCache HeapTrack::s_moduleCache;
+#endif
 std::atomic<bool> HeapTrack::s_paused {false};
 }
 
 static void heaptrack_realloc_impl(void* ptr_in, size_t size, void* ptr_out)
 {
-    if (!HeapTrack::isPaused() && ptr_out && !RecursionGuard::isActive) {
+    if (!HeapTrack::isPaused() && ptr_out && !RecursionGuard::isActive()) {
         RecursionGuard guard;
 
         debugLog<VeryVerboseOutput>("heaptrack_realloc(%p, %zu, %p)", ptr_in, size, ptr_out);
@@ -869,7 +1028,7 @@ void heaptrack_resume()
 
 void heaptrack_malloc(void* ptr, size_t size)
 {
-    if (!HeapTrack::isPaused() && ptr && !RecursionGuard::isActive) {
+    if (!HeapTrack::isPaused() && ptr && !RecursionGuard::isActive()) {
         RecursionGuard guard;
 
         debugLog<VeryVerboseOutput>("heaptrack_malloc(%p, %zu)", ptr, size);
@@ -883,7 +1042,7 @@ void heaptrack_malloc(void* ptr, size_t size)
 
 void heaptrack_free(void* ptr)
 {
-    if (!HeapTrack::isPaused() && ptr && !RecursionGuard::isActive) {
+    if (!HeapTrack::isPaused() && ptr && !RecursionGuard::isActive()) {
         RecursionGuard guard;
 
         debugLog<VeryVerboseOutput>("heaptrack_free(%p)", ptr);

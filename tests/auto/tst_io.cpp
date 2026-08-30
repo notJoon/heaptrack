@@ -7,6 +7,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "3rdparty/doctest.h"
 
+#include "interpret/rawmoduledata.h"
 #include "util/linereader.h"
 #include "util/linewriter.h"
 
@@ -175,4 +176,47 @@ TEST_CASE ("read line 32bit") {
     REQUIRE((reader >> idx));
     REQUIRE(idx == 0x0);
     REQUIRE(!(reader >> idx));
+}
+
+TEST_CASE ("read raw module data") {
+    SUBCASE("version 3 without UUID")
+    {
+        stringstream stream("m 3 foo 1000 0 2000\n");
+        LineReader reader;
+        reader.setExpectedSizedStrings(true);
+        REQUIRE(reader.getLine(stream));
+
+        RawModuleData module;
+        REQUIRE(parseRawModule(reader, 3, module));
+        REQUIRE(module.fileName == "foo");
+        REQUIRE(module.addressStart == 0x1000);
+        REQUIRE(module.uuid.empty());
+        REQUIRE(module.segments == vector<RawModuleSegment> {{0, 0x2000}});
+    }
+
+    SUBCASE("version 4 with UUID")
+    {
+        stringstream stream("m 3 foo 1000 0123456789abcdef0123456789abcdef 0 2000\n");
+        LineReader reader;
+        reader.setExpectedSizedStrings(true);
+        REQUIRE(reader.getLine(stream));
+
+        RawModuleData module;
+        REQUIRE(parseRawModule(reader, 4, module));
+        REQUIRE(module.fileName == "foo");
+        REQUIRE(module.addressStart == 0x1000);
+        REQUIRE(module.uuid == "0123456789abcdef0123456789abcdef");
+        REQUIRE(module.segments == vector<RawModuleSegment> {{0, 0x2000}});
+    }
+
+    SUBCASE("version 4 rejects a missing UUID")
+    {
+        stringstream stream("m 3 foo 1000\n");
+        LineReader reader;
+        reader.setExpectedSizedStrings(true);
+        REQUIRE(reader.getLine(stream));
+
+        RawModuleData module;
+        REQUIRE_FALSE(parseRawModule(reader, 4, module));
+    }
 }

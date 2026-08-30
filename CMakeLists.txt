@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16.0)
 
 project(heaptrack)
-enable_testing()
+include(CTest)
 
 if(NOT CMAKE_BUILD_TYPE)
   message(STATUS "Setting build type to 'RelWithDebInfo' as none was specified.")
@@ -13,7 +13,7 @@ set(HEAPTRACK_VERSION_MINOR 6)
 set(HEAPTRACK_VERSION_PATCH 80)
 set(HEAPTRACK_LIB_VERSION 1.6.80)
 set(HEAPTRACK_LIB_SOVERSION 2)
-set(HEAPTRACK_FILE_FORMAT_VERSION 3)
+set(HEAPTRACK_FILE_FORMAT_VERSION 4)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 

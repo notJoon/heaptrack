@@ -143,6 +143,25 @@ public:
         }
     }
 
+    bool readToken(std::string& token)
+    {
+        auto it = m_it;
+        const auto end = m_line.cend();
+        while (it != end && *it != ' ') {
+            ++it;
+        }
+        if (it == m_it) {
+            return false;
+        }
+
+        token.assign(m_it, it);
+        if (it != end) {
+            ++it;
+        }
+        m_it = it;
+        return true;
+    }
+
     bool operator>>(bool& flag)
     {
         if (m_it != m_line.cend()) {
