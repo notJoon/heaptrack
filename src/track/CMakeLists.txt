@@ -19,6 +19,10 @@ if (CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
     set(LIBUTIL_LIBRARY "util")
 endif()
 
+if (NOT APPLE)
+    set(HEAPTRACK_RT_LIBRARY "rt")
+endif()
+
 set_property(TARGET heaptrack_unwind PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 # heaptrack_env: runtime environment tests
@@ -33,7 +37,13 @@ set_target_properties(heaptrack_env PROPERTIES
 )
 
 # heaptrack_preload: track a newly started process
-add_library(heaptrack_preload MODULE
+if (APPLE)
+    set(HEAPTRACK_PRELOAD_LIBRARY_TYPE SHARED)
+else()
+    set(HEAPTRACK_PRELOAD_LIBRARY_TYPE MODULE)
+endif()
+
+add_library(heaptrack_preload ${HEAPTRACK_PRELOAD_LIBRARY_TYPE}
     heaptrack_preload.cpp
     libheaptrack.cpp
 )
@@ -43,7 +53,7 @@ target_link_libraries(heaptrack_preload LINK_PRIVATE
     ${CMAKE_THREAD_LIBS_INIT}
     ${LIBUTIL_LIBRARY}
     heaptrack_unwind
-    rt
+    ${HEAPTRACK_RT_LIBRARY}
 )
 
 set_target_properties(heaptrack_preload PROPERTIES
@@ -56,30 +66,32 @@ install(TARGETS heaptrack_preload
     LIBRARY DESTINATION ${LIB_INSTALL_DIR}/heaptrack/
 )
 
-# heaptrack_inject: track an already running process
-add_library(heaptrack_inject MODULE
-    heaptrack_inject.cpp
-    libheaptrack.cpp
-)
+if (NOT APPLE)
+    # heaptrack_inject: track an already running process
+    add_library(heaptrack_inject MODULE
+        heaptrack_inject.cpp
+        libheaptrack.cpp
+    )
 
-target_link_libraries(heaptrack_inject PRIVATE
-    ${CMAKE_DL_LIBS}
-    ${CMAKE_THREAD_LIBS_INIT}
-    ${LIBUTIL_LIBRARY}
-    heaptrack_unwind
-    rt
-    tsl::robin_map
-)
+    target_link_libraries(heaptrack_inject PRIVATE
+        ${CMAKE_DL_LIBS}
+        ${CMAKE_THREAD_LIBS_INIT}
+        ${LIBUTIL_LIBRARY}
+        heaptrack_unwind
+        ${HEAPTRACK_RT_LIBRARY}
+        tsl::robin_map
+    )
 
-set_target_properties(heaptrack_inject PROPERTIES
-    VERSION ${HEAPTRACK_LIB_VERSION}
-    SOVERSION ${HEAPTRACK_LIB_SOVERSION}
-    LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/${LIB_INSTALL_DIR}/heaptrack"
-)
+    set_target_properties(heaptrack_inject PROPERTIES
+        VERSION ${HEAPTRACK_LIB_VERSION}
+        SOVERSION ${HEAPTRACK_LIB_SOVERSION}
+        LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/${LIB_INSTALL_DIR}/heaptrack"
+    )
 
-install(TARGETS heaptrack_inject
-    LIBRARY DESTINATION ${LIB_INSTALL_DIR}/heaptrack/
-)
+    install(TARGETS heaptrack_inject
+        LIBRARY DESTINATION ${LIB_INSTALL_DIR}/heaptrack/
+    )
+endif()
 
 # public API for custom pool allocators or static binaries
 install(FILES heaptrack_api.h

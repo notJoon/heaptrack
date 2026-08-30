@@ -2,7 +2,9 @@ if (ECM_FOUND)
     include(ECMEnableSanitizers)
 endif()
 
-find_package(Elfutils 0.158 REQUIRED)
+if (NOT APPLE)
+    find_package(Elfutils 0.158 REQUIRED)
+endif()
 find_package(Boost 1.70.0 CONFIG REQUIRED COMPONENTS program_options)
 
 include_directories(

@@ -46,7 +46,9 @@ if (Boost_IOSTREAMS_FOUND)
 endif()
 set_package_properties(ZSTD PROPERTIES TYPE RECOMMENDED PURPOSE "Zstandard offers better (de)compression performance compared with gzip/zlib, making heaptrack faster and datafiles smaller.")
 
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux"
+    OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"
+    OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     set(HEAPTRACK_BUILD_TRACK_DEFAULT ON)
     set(HEAPTRACK_BUILD_INTERPRET_DEFAULT ON)
 else()
@@ -87,10 +89,16 @@ option(
 # possibly works with older Qt6, but I didn't test that yet
 set(QT_MIN_VERSION 6.5.0)
 
+if (APPLE)
+    set(HEAPTRACK_USE_LIBUNWIND_DEFAULT OFF)
+else()
+    set(HEAPTRACK_USE_LIBUNWIND_DEFAULT ON)
+endif()
+
 option(
   HEAPTRACK_USE_LIBUNWIND
   "Define preferred unwind functionality - Libunwind as ON and unwind_tables as OFF."
-  ON
+  ${HEAPTRACK_USE_LIBUNWIND_DEFAULT}
 )
 
 option(
@@ -143,18 +151,29 @@ if (HEAPTRACK_BUILD_TRACK)
         find_package(Libunwind REQUIRED)
     endif()
 
-    check_cxx_source_compiles(
-        "#ifdef __linux__
-        #include <stdio_ext.h>
-        #endif
-        #include <fcntl.h>
-        #include <dlfcn.h>
-        #include <link.h>
-        int main() { return 0; }"
-        HAVE_LINUX_HEADERS)
+    if (APPLE)
+        set(HEAPTRACK_PLATFORM_HEADER_CHECK "
+            #include <dlfcn.h>
+            #include <mach-o/dyld.h>
+            #include <mach/mach.h>
+            int main() { return 0; }")
+    else()
+        set(HEAPTRACK_PLATFORM_HEADER_CHECK "
+            #ifdef __linux__
+            #include <stdio_ext.h>
+            #endif
+            #include <fcntl.h>
+            #include <dlfcn.h>
+            #include <link.h>
+            int main() { return 0; }")
+    endif()
 
-    if (NOT HAVE_LINUX_HEADERS)
-        message(FATAL_ERROR "You are missing some Linux/BSD headers required to compile heaptrack.")
+    check_cxx_source_compiles(
+        "${HEAPTRACK_PLATFORM_HEADER_CHECK}"
+        HAVE_PLATFORM_HEADERS)
+
+    if (NOT HAVE_PLATFORM_HEADERS)
+        message(FATAL_ERROR "You are missing platform headers required to compile heaptrack.")
     endif()
 endif()
 
