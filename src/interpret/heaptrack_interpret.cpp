@@ -26,6 +26,8 @@
 #ifndef __APPLE__
 #include "dwarfdiecache.h"
 #include "symbolcache.h"
+#else
+#include "machsymbolizer.h"
 #endif
 
 #include "util/config.h"
@@ -408,11 +410,9 @@ struct AccumulatedTraceData
             m_modulesDirty = false;
         }
 
-#ifndef __APPLE__
-        auto resolveFrame = [this](const Frame& frame) {
+        auto resolveFrame = [this](const auto& frame) {
             return ResolvedFrame {intern(frame.function), intern(frame.file), frame.line};
         };
-#endif
 
         ResolvedIP data;
         // find module for this instruction pointer
@@ -429,6 +429,17 @@ struct AccumulatedTraceData
                 std::transform(info.inlined.begin(), info.inlined.end(), std::back_inserter(data.inlined),
                                resolveFrame);
             }
+#else
+            // The same image can be loaded again with a different UUID or slide.
+            const auto key = fragment->fileName + fragment->uuid + std::to_string(fragment->addressStart);
+            auto& symbolizer = m_machSymbolizers[key];
+            if (!symbolizer) {
+                std::vector<std::string> searchPaths = m_debugPaths;
+                searchPaths.insert(searchPaths.end(), m_extraPaths.begin(), m_extraPaths.end());
+                symbolizer = std::make_unique<MachSymbolizer>(fragment->fileName, fragment->uuid,
+                                                              fragment->addressStart, searchPaths);
+            }
+            data.frame = resolveFrame(symbolizer->resolve(ip));
 #endif
         }
         return data;
@@ -553,6 +564,8 @@ private:
     Dwfl_Callbacks m_callbacks;
     SymbolCache m_symbolCache;
     tsl::robin_map<string, Module> m_modules;
+#else
+    tsl::robin_map<string, std::unique_ptr<MachSymbolizer>> m_machSymbolizers;
 #endif
     bool m_modulesDirty = false;
 

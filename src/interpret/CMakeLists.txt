@@ -15,7 +15,9 @@ add_definitions("-DHAVE_STDINT_H")
 
 add_executable(heaptrack_interpret heaptrack_interpret.cpp)
 
-if (NOT APPLE)
+if (APPLE)
+    target_sources(heaptrack_interpret PRIVATE machsymbolizer.cpp)
+else()
     target_sources(heaptrack_interpret PRIVATE
         dwarfdiecache.cpp
         symbolcache.cpp

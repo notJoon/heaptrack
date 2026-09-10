@@ -55,6 +55,22 @@ if (TARGET heaptrack_interpret)
     endif()
     configure_file(tst_heaptrack_interpret.cmake.sh ${CMAKE_CURRENT_BINARY_DIR}/tst_heaptrack_interpret.sh @ONLY)
     add_test(NAME tst_heaptrack_interpret COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tst_heaptrack_interpret.sh)
+
+    if (APPLE)
+        add_executable(tst_macos_symbolication_fixture tst_macos_symbolication_fixture.cpp)
+        target_compile_options(tst_macos_symbolication_fixture PRIVATE -g)
+        set_target_properties(tst_macos_symbolication_fixture PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/${BIN_INSTALL_DIR}"
+        )
+        add_custom_command(TARGET tst_macos_symbolication_fixture POST_BUILD
+            COMMAND /usr/bin/dsymutil $<TARGET_FILE:tst_macos_symbolication_fixture>
+            COMMAND /usr/bin/strip -S $<TARGET_FILE:tst_macos_symbolication_fixture>
+        )
+        configure_file(tst_macos_symbolication.cmake.sh
+            ${CMAKE_CURRENT_BINARY_DIR}/tst_macos_symbolication.sh @ONLY)
+        add_test(NAME tst_macos_symbolication
+            COMMAND /bin/sh ${CMAKE_CURRENT_BINARY_DIR}/tst_macos_symbolication.sh)
+    endif()
 endif()
 
 if (APPLE)

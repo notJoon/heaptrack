@@ -1,5 +1,5 @@
 /*
-    SPDX-FileCopyrightText: 2026 notJoon
+    SPDX-FileCopyrightText: 2026 Lee ByeongJun <lbj199874@gmail.com>
 
     SPDX-License-Identifier: GPL-2.0-or-later
 */
