@@ -26,7 +26,8 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DHEAPTRACK_BUILD_GUI=OFF
+            -DHEAPTRACK_BUILD_GUI=OFF \
+            -DHEAPTRACK_BUILD_INTERPRET=ON
 
       - name: Build
         run: cmake --build build -- -k 0

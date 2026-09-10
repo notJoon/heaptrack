@@ -22,9 +22,11 @@
 #include <tuple>
 #include <vector>
 
-#include "dwarfdiecache.h"
 #include "rawmoduledata.h"
+#ifndef __APPLE__
+#include "dwarfdiecache.h"
 #include "symbolcache.h"
+#endif
 
 #include "util/config.h"
 #include "util/linereader.h"
@@ -35,8 +37,10 @@
 
 #include <csignal>
 #include <cstring>
+#ifndef __APPLE__
 #include <dwarf.h>
 #include <elfutils/libdwelf.h>
+#endif
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -44,6 +48,20 @@ using namespace std;
 namespace po = boost::program_options;
 
 namespace {
+#define error_out cerr << __FILE__ << ':' << __LINE__ << " ERROR:"
+
+bool fileExists(const std::string& file)
+{
+    struct stat buffer;
+    return stat(file.c_str(), &buffer) == 0;
+}
+
+#ifndef __APPLE__
+bool startsWith(const std::string& haystack, const char* needle)
+{
+    return haystack.compare(0, strlen(needle), needle) == 0;
+}
+
 bool isArmArch()
 {
 #ifdef __arm__
@@ -51,19 +69,6 @@ bool isArmArch()
 #else
     return false;
 #endif
-}
-
-#define error_out cerr << __FILE__ << ':' << __LINE__ << " ERROR:"
-
-bool startsWith(const std::string& haystack, const char* needle)
-{
-    return haystack.compare(0, strlen(needle), needle) == 0;
-}
-
-bool fileExists(const std::string& file)
-{
-    struct stat buffer;
-    return stat(file.c_str(), &buffer) == 0;
 }
 
 static uint64_t alignedAddress(uint64_t addr, bool isArmArch)
@@ -92,7 +97,9 @@ static SymbolCache::Symbols extractSymbols(Dwfl_Module* module, uint64_t elfStar
     }
     return symbols;
 }
+#endif
 
+#ifndef __APPLE__
 struct Frame
 {
     Frame(string function = {}, string file = {}, int line = 0)
@@ -117,6 +124,7 @@ struct AddressInformation
     Frame frame;
     vector<Frame> inlined;
 };
+#endif
 
 struct ResolvedFrame
 {
@@ -171,6 +179,7 @@ struct ModuleFragment
     string uuid;
 };
 
+#ifndef __APPLE__
 struct Module
 {
     Module(string fileName, uintptr_t addressStart, Dwfl_Module* module, SymbolCache* symbolCache)
@@ -273,6 +282,7 @@ struct Module
     mutable DwarfDieCache dieCache;
     SymbolCache* symbolCache;
 };
+#endif
 
 struct AccumulatedTraceData
 {
@@ -283,11 +293,14 @@ struct AccumulatedTraceData
         , m_debugPaths(debugPaths)
         , m_extraPaths(extraPaths)
     {
+#ifndef __APPLE__
         initializePaths();
+#endif
         m_moduleFragments.reserve(256);
         m_internedData.reserve(4096);
         m_encounteredIps.reserve(32768);
 
+#ifndef __APPLE__
         m_callbacks = {
             &dwfl_build_id_find_elf,
             &dwfl_standard_find_debuginfo,
@@ -296,6 +309,7 @@ struct AccumulatedTraceData
         };
 
         m_dwfl = dwfl_begin(&m_callbacks);
+#endif
     }
 
     ~AccumulatedTraceData()
@@ -303,8 +317,10 @@ struct AccumulatedTraceData
         out.write("# strings: %zu\n# ips: %zu\n", m_internedData.size(), m_encounteredIps.size());
         out.flush();
 
+#ifndef __APPLE__
         delete[] m_debugPath;
         dwfl_end(m_dwfl);
+#endif
     }
 
     /// find a file in the sysroot or extra path
@@ -382,18 +398,21 @@ struct AccumulatedTraceData
             }
 #endif
 
+#ifndef __APPLE__
             // reset dwfl state
             m_modules.clear();
-
             dwfl_report_begin(m_dwfl);
             dwfl_report_end(m_dwfl, nullptr, nullptr);
+#endif
 
             m_modulesDirty = false;
         }
 
+#ifndef __APPLE__
         auto resolveFrame = [this](const Frame& frame) {
             return ResolvedFrame {intern(frame.function), intern(frame.file), frame.line};
         };
+#endif
 
         ResolvedIP data;
         // find module for this instruction pointer
@@ -403,12 +422,14 @@ struct AccumulatedTraceData
         if (fragment != m_moduleFragments.end() && fragment->fragmentStart <= ip && fragment->fragmentEnd >= ip) {
             data.moduleIndex = fragment->moduleIndex;
 
+#ifndef __APPLE__
             if (auto module = reportModule(*fragment)) {
                 const auto info = module->resolveAddress(ip);
                 data.frame = resolveFrame(info.frame);
                 std::transform(info.inlined.begin(), info.inlined.end(), std::back_inserter(data.inlined),
                                resolveFrame);
             }
+#endif
         }
         return data;
     }
@@ -479,6 +500,7 @@ struct AccumulatedTraceData
     LineWriter out;
 
 private:
+#ifndef __APPLE__
     Module* reportModule(const ModuleFragment& module)
     {
         if (startsWith(module.fileName, "linux-vdso.so")) {
@@ -522,12 +544,16 @@ private:
         m_debugPath = new char[path.size() + 1];
         std::strcpy(m_debugPath, path.c_str());
     }
+#endif
 
     vector<ModuleFragment> m_moduleFragments;
+#ifndef __APPLE__
     Dwfl* m_dwfl = nullptr;
     char* m_debugPath = nullptr;
     Dwfl_Callbacks m_callbacks;
     SymbolCache m_symbolCache;
+    tsl::robin_map<string, Module> m_modules;
+#endif
     bool m_modulesDirty = false;
 
     std::string m_sysroot;
@@ -536,7 +562,6 @@ private:
 
     tsl::robin_map<string, size_t> m_internedData;
     tsl::robin_map<uintptr_t, size_t> m_encounteredIps;
-    tsl::robin_map<string, Module> m_modules;
     tsl::robin_map<string, string> m_resolvedFiles;
 };
 
@@ -694,8 +719,8 @@ int main(int argc, char** argv)
                 }
             }
         } else if (reader.mode() == 't') {
-            uintptr_t instructionPointer = 0;
-            size_t parentIndex = 0;
+            uint64_t instructionPointer = 0;
+            uint64_t parentIndex = 0;
             if (!(reader >> instructionPointer) || !(reader >> parentIndex)) {
                 error_out << "failed to parse line: " << reader.line() << endl;
                 return 1;

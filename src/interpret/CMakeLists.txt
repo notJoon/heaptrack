@@ -13,12 +13,15 @@ include_directories(
 
 add_definitions("-DHAVE_STDINT_H")
 
-add_executable(heaptrack_interpret
-    heaptrack_interpret.cpp
-    dwarfdiecache.cpp
-    symbolcache.cpp
-    demangler.cpp
-)
+add_executable(heaptrack_interpret heaptrack_interpret.cpp)
+
+if (NOT APPLE)
+    target_sources(heaptrack_interpret PRIVATE
+        dwarfdiecache.cpp
+        symbolcache.cpp
+        demangler.cpp
+    )
+endif()
 
 target_link_libraries(heaptrack_interpret
     PRIVATE ${LIBDW_LIBRARIES} tsl::robin_map

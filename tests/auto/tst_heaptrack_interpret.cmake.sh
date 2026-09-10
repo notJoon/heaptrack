@@ -30,7 +30,7 @@ unset DEBUGINFOD_URLS
     > "$temp_output_actual"
 
 # verification step
-if diff -u "${SRC_DIR}/heaptrack.test_sysroot.expected" "$temp_output_actual"; then
+if diff -u "${SRC_DIR}/@HEAPTRACK_INTERPRET_EXPECTED@" "$temp_output_actual"; then
     echo "Test passed: Output matches expected result."
     exit 0
 else
