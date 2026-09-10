@@ -47,10 +47,12 @@ endif()
 set_package_properties(ZSTD PROPERTIES TYPE RECOMMENDED PURPOSE "Zstandard offers better (de)compression performance compared with gzip/zlib, making heaptrack faster and datafiles smaller.")
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux"
-    OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"
-    OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
     set(HEAPTRACK_BUILD_TRACK_DEFAULT ON)
     set(HEAPTRACK_BUILD_INTERPRET_DEFAULT ON)
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set(HEAPTRACK_BUILD_TRACK_DEFAULT ON)
+    set(HEAPTRACK_BUILD_INTERPRET_DEFAULT OFF)
 else()
     set(HEAPTRACK_BUILD_TRACK_DEFAULT OFF)
     set(HEAPTRACK_BUILD_INTERPRET_DEFAULT OFF)

@@ -1,4 +1,4 @@
-if (Boost_FILESYSTEM_FOUND)
+if (Boost_FILESYSTEM_FOUND AND NOT APPLE)
     add_executable(tst_inject tst_inject.cpp)
     set_target_properties(tst_inject PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/${BIN_INSTALL_DIR}")
     target_link_libraries(tst_inject

@@ -17,8 +17,10 @@ target_link_libraries(test_lib testlib)
 
 add_executable(test_aggregation test_aggregation.cpp)
 
-add_executable(signals signals.cpp)
-target_link_libraries(signals ${CMAKE_THREAD_LIBS_INIT})
+if (NOT APPLE)
+    add_executable(signals signals.cpp)
+    target_link_libraries(signals ${CMAKE_THREAD_LIBS_INIT})
+endif()
 
 add_executable(libc_leaks libc_leaks.c)
 

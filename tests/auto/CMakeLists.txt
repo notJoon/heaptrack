@@ -47,8 +47,10 @@ endif()
 
 add_test(NAME tst_trace COMMAND tst_trace)
 
-configure_file(tst_heaptrack_interpret.cmake.sh ${CMAKE_CURRENT_BINARY_DIR}/tst_heaptrack_interpret.sh @ONLY)
-add_test(NAME tst_heaptrack_interpret COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tst_heaptrack_interpret.sh)
+if (TARGET heaptrack_interpret)
+    configure_file(tst_heaptrack_interpret.cmake.sh ${CMAKE_CURRENT_BINARY_DIR}/tst_heaptrack_interpret.sh @ONLY)
+    add_test(NAME tst_heaptrack_interpret COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tst_heaptrack_interpret.sh)
+endif()
 
 if (APPLE)
     add_executable(tst_macos_preload_client tst_macos_preload_client.c)
