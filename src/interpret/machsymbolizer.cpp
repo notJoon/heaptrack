@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <fcntl.h>
 #include <iostream>
 #include <memory>
 #include <spawn.h>
@@ -26,6 +27,7 @@ std::string run(const std::vector<std::string>& arguments)
     if (pipe(output) != 0) {
         return {};
     }
+    fcntl(output[0], F_SETFD, FD_CLOEXEC);
 
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
@@ -114,11 +116,13 @@ MachSymbolizer::MachSymbolizer(const std::string& fileName, const std::string& u
     if (pipe(input) != 0) {
         return;
     }
+    fcntl(input[1], F_SETFD, FD_CLOEXEC);
     if (pipe(output) != 0) {
         close(input[0]);
         close(input[1]);
         return;
     }
+    fcntl(output[0], F_SETFD, FD_CLOEXEC);
 
     // Keep atos running so every address does not pay its startup cost.
     posix_spawn_file_actions_t actions;
@@ -130,17 +134,14 @@ MachSymbolizer::MachSymbolizer(const std::string& fileName, const std::string& u
     posix_spawn_file_actions_addclose(&actions, output[0]);
     posix_spawn_file_actions_addclose(&actions, output[1]);
 
-    const auto slideArgument = "0x" + [&] {
-        char value[2 * sizeof(slide) + 1];
-        snprintf(value, sizeof(value), "%zx", slide);
-        return std::string(value);
-    }();
+    char slideArgument[2 + 2 * sizeof(slide) + 1];
+    snprintf(slideArgument, sizeof(slideArgument), "0x%zx", slide);
     const auto objectName = object.string();
     std::vector<char*> argv = {const_cast<char*>("/usr/bin/atos"),
                                const_cast<char*>("-o"),
                                const_cast<char*>(objectName.c_str()),
                                const_cast<char*>("-s"),
-                               const_cast<char*>(slideArgument.c_str()),
+                               const_cast<char*>(slideArgument),
                                const_cast<char*>("-fullPath"),
                                nullptr};
     const auto error = posix_spawn(&m_pid, argv.front(), &actions, nullptr, argv.data(), environ);
