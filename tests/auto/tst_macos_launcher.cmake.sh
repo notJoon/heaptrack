@@ -34,6 +34,8 @@ else
 fi
 
 grep -Eq '^\+ 12341 [0-9a-f]+ [0-9a-f]+$' "$output_base.decoded"
+grep -Eq '^v [0-9a-f]+ 4$' "$output_base.decoded"
+grep -Eq '^m [0-9a-f]+ .+ [0-9a-f]+ [0-9a-f]{32}( [0-9a-f]+ [0-9a-f]+)+$' "$output_base.decoded"
 
 allocations=$(grep -c '^+ ' "$output_base.decoded")
 frees=$(grep -c '^- ' "$output_base.decoded")
