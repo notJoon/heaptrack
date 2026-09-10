@@ -4,16 +4,84 @@
     SPDX-License-Identifier: LGPL-2.1-or-later
 */
 
+#include <dlfcn.h>
+#include <errno.h>
+#include <malloc/malloc.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <errno.h>
-#include <dlfcn.h>
-#include <stdint.h>
 #include <string.h>
 
 static void report(const char* allocator, void* pointer)
 {
     printf("%s=%p\n", allocator, pointer);
+}
+
+static int report_allocation(const char* allocator, size_t size, void* pointer)
+{
+    if (pointer == NULL) {
+        return 0;
+    }
+    printf("%s=%zx:%p\n", allocator, size, pointer);
+    return 1;
+}
+
+static int test_darwin_allocators(void)
+{
+    const malloc_type_id_t type_id = 0;
+    malloc_zone_t* zone = malloc_default_zone();
+    void* pointer;
+
+#define CHECK_ALLOCATION(name, size, expression)                                                                      \
+    do {                                                                                                               \
+        pointer = (expression);                                                                                        \
+        if (!report_allocation(name, size, pointer))                                                                   \
+            return EXIT_FAILURE;                                                                                       \
+    } while (0)
+
+    CHECK_ALLOCATION("zone_malloc", 0x13001, malloc_zone_malloc(zone, 0x13001));
+    malloc_zone_free(zone, pointer);
+    CHECK_ALLOCATION("zone_calloc", 0x13002, malloc_zone_calloc(zone, 2, 0x9801));
+    malloc_zone_free(zone, pointer);
+    CHECK_ALLOCATION("zone_realloc_input", 0x10, malloc_zone_malloc(zone, 0x10));
+    CHECK_ALLOCATION("zone_realloc", 0x13003, malloc_zone_realloc(zone, pointer, 0x13003));
+    malloc_zone_free(zone, pointer);
+    CHECK_ALLOCATION("zone_valloc", 0x13004, malloc_zone_valloc(zone, 0x13004));
+    malloc_zone_free(zone, pointer);
+    CHECK_ALLOCATION("zone_memalign", 0x13005, malloc_zone_memalign(zone, 16, 0x13005));
+    malloc_zone_free(zone, pointer);
+
+    CHECK_ALLOCATION("type_malloc", 0x13006, malloc_type_malloc(0x13006, type_id));
+    malloc_type_free(pointer, type_id);
+    CHECK_ALLOCATION("type_calloc", 0x13008, malloc_type_calloc(2, 0x9804, type_id));
+    malloc_type_free(pointer, type_id);
+    CHECK_ALLOCATION("type_realloc_input", 0x10, malloc_type_malloc(0x10, type_id));
+    CHECK_ALLOCATION("type_realloc", 0x13009, malloc_type_realloc(pointer, 0x13009, type_id));
+    malloc_type_free(pointer, type_id);
+    CHECK_ALLOCATION("type_valloc", 0x1300a, malloc_type_valloc(0x1300a, type_id));
+    malloc_type_free(pointer, type_id);
+    CHECK_ALLOCATION("type_aligned_alloc", 0x13010, malloc_type_aligned_alloc(16, 0x13010, type_id));
+    malloc_type_free(pointer, type_id);
+    if (malloc_type_posix_memalign(&pointer, 16, 0x1300b, type_id) != 0
+        || !report_allocation("type_posix_memalign", 0x1300b, pointer)) {
+        return EXIT_FAILURE;
+    }
+    malloc_type_free(pointer, type_id);
+
+    CHECK_ALLOCATION("type_zone_malloc", 0x1300c, malloc_type_zone_malloc(zone, 0x1300c, type_id));
+    malloc_type_zone_free(zone, pointer, type_id);
+    CHECK_ALLOCATION("type_zone_calloc", 0x1300e, malloc_type_zone_calloc(zone, 2, 0x9807, type_id));
+    malloc_type_zone_free(zone, pointer, type_id);
+    CHECK_ALLOCATION("type_zone_realloc_input", 0x10, malloc_type_zone_malloc(zone, 0x10, type_id));
+    CHECK_ALLOCATION("type_zone_realloc", 0x1300f, malloc_type_zone_realloc(zone, pointer, 0x1300f, type_id));
+    malloc_type_zone_free(zone, pointer, type_id);
+    CHECK_ALLOCATION("type_zone_valloc", 0x13011, malloc_type_zone_valloc(zone, 0x13011, type_id));
+    malloc_type_zone_free(zone, pointer, type_id);
+    CHECK_ALLOCATION("type_zone_memalign", 0x13012, malloc_type_zone_memalign(zone, 16, 0x13012, type_id));
+    malloc_type_zone_free(zone, pointer, type_id);
+
+#undef CHECK_ALLOCATION
+    return EXIT_SUCCESS;
 }
 
 static int test_edge_cases(void)
@@ -49,6 +117,9 @@ int main(int argc, char** argv)
 
     if (argc == 2 && strcmp(argv[1], "--edge-cases") == 0) {
         return test_edge_cases();
+    }
+    if (argc == 2 && strcmp(argv[1], "--darwin-allocators") == 0) {
+        return test_darwin_allocators();
     }
 
     void* pointer = malloc(0x12341);

@@ -34,8 +34,8 @@ void heaptrack_free(void* ptr);
 void heaptrack_realloc(void* ptr_in, size_t size, void* ptr_out);
 void heaptrack_realloc2(uintptr_t ptr_in, size_t size, uintptr_t ptr_out);
 
-typedef void* (*heaptrack_realloc_callback_t)(void*, size_t);
-void* heaptrack_realloc_locked(void* ptr_in, size_t size, heaptrack_realloc_callback_t callback);
+typedef void* (*heaptrack_realloc_callback_t)(void*, size_t, void*);
+void* heaptrack_realloc_locked(void* ptr_in, size_t size, heaptrack_realloc_callback_t callback, void* context);
 
 typedef void (*heaptrack_invalidate_module_cache_callback)();
 void heaptrack_invalidate_module_cache(heaptrack_invalidate_module_cache_callback callback);

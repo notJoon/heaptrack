@@ -35,7 +35,7 @@ std::atomic<bool> reallocCallbackEntered {false};
 std::atomic<bool> releaseReallocCallback {false};
 void* reallocCallbackResult = nullptr;
 
-void* blockingRealloc(void*, size_t)
+void* blockingRealloc(void*, size_t, void*)
 {
     reallocCallbackEntered.store(true, std::memory_order_release);
     while (!releaseReallocCallback.load(std::memory_order_acquire)) {
@@ -114,7 +114,7 @@ TEST_CASE ("api") {
             heaptrack_malloc(data, sizeof(data[0]));
 
             auto reallocator = async(launch::async, [&]() {
-                return heaptrack_realloc_locked(data, sizeof(data[1]), &blockingRealloc);
+                return heaptrack_realloc_locked(data, sizeof(data[1]), &blockingRealloc, nullptr);
             });
             while (!reallocCallbackEntered.load(memory_order_acquire)) {
                 this_thread::yield();

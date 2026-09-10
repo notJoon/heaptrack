@@ -46,3 +46,19 @@ test "$(grep -Ec "^- ${failed_realloc_pointer}$" "$edge_raw_file")" -eq 1
 grep -Eq "^\\+ 23456 [0-9a-f]+ ${failed_realloc_pointer}$" "$edge_raw_file"
 test "$(grep -c '^+ ' "$edge_raw_file")" -eq 2
 test "$(grep -c '^- ' "$edge_raw_file")" -eq 2
+
+darwin_raw_file="@CMAKE_CURRENT_BINARY_DIR@/tst_macos_preload_darwin.raw"
+darwin_pointer_file="@CMAKE_CURRENT_BINARY_DIR@/tst_macos_preload_darwin.pointers"
+rm -f "$darwin_raw_file" "$darwin_pointer_file"
+DYLD_INSERT_LIBRARIES="$preload_library" DUMP_HEAPTRACK_OUTPUT="$darwin_raw_file" \
+    "$client" --darwin-allocators > "$darwin_pointer_file"
+
+while IFS='=:' read -r allocator size pointer; do
+    test -n "$allocator" && test -n "$size" && test -n "$pointer"
+    pointer=${pointer#0x}
+    grep -Eq "^\\+ ${size} [0-9a-f]+ ${pointer}$" "$darwin_raw_file"
+    grep -Eq "^- ${pointer}$" "$darwin_raw_file"
+done < "$darwin_pointer_file"
+test "$(wc -l < "$darwin_pointer_file")" -eq 19
+test "$(grep -c '^+ ' "$darwin_raw_file")" -eq 19
+test "$(grep -c '^- ' "$darwin_raw_file")" -eq 19

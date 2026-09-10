@@ -1067,13 +1067,13 @@ void heaptrack_realloc2(uintptr_t ptr_in, size_t size, uintptr_t ptr_out)
     heaptrack_realloc_impl(reinterpret_cast<void*>(ptr_in), size, reinterpret_cast<void*>(ptr_out));
 }
 
-void* heaptrack_realloc_locked(void* ptr_in, size_t size, heaptrack_realloc_callback_t callback)
+void* heaptrack_realloc_locked(void* ptr_in, size_t size, heaptrack_realloc_callback_t callback, void* context)
 {
     if (!callback) {
         return nullptr;
     }
     if (HeapTrack::isPaused() || RecursionGuard::isActive()) {
-        return callback(ptr_in, size);
+        return callback(ptr_in, size, context);
     }
 
     RecursionGuard guard;
@@ -1083,7 +1083,7 @@ void* heaptrack_realloc_locked(void* ptr_in, size_t size, heaptrack_realloc_call
     void* ptr_out = nullptr;
     bool callbackCalled = false;
     const auto recorded = HeapTrack::op(guard, [&](HeapTrack& heaptrack) {
-        ptr_out = callback(ptr_in, size);
+        ptr_out = callback(ptr_in, size, context);
         callbackCalled = true;
         if (!ptr_out) {
             return;
@@ -1094,7 +1094,7 @@ void* heaptrack_realloc_locked(void* ptr_in, size_t size, heaptrack_realloc_call
         heaptrack.handleMalloc(ptr_out, size, trace);
     });
     if (!recorded && !callbackCalled) {
-        ptr_out = callback(ptr_in, size);
+        ptr_out = callback(ptr_in, size, context);
     }
     return ptr_out;
 }
