@@ -138,6 +138,42 @@ of the CMake command, as it will tell you about missing dependencies!
     cmake -DCMAKE_BUILD_TYPE=Release .. # look for messages about missing dependencies!
     make -j$(nproc)
 
+#### Build and install `heaptrack` on macOS
+
+Install the command line build dependencies using [Homebrew](https://brew.sh):
+
+    brew install cmake ninja boost zstd
+
+Configure the installation prefix when generating the build directory, then build, test and
+install heaptrack:
+
+    cmake -S . -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
+        -DHEAPTRACK_BUILD_GUI=OFF \
+        -DHEAPTRACK_BUILD_INTERPRET=ON
+    cmake --build build
+    ctest --test-dir build --output-on-failure
+    cmake --install build
+
+Add the installation directory to `PATH` and profile an application built locally:
+
+    export PATH="$HOME/.local/bin:$PATH"
+    heaptrack --output /path/to/profile /path/to/application [arguments...]
+    heaptrack_print /path/to/profile.zst
+
+When zstd is unavailable, heaptrack writes a `.gz` file instead. To retain the raw trace for
+later interpretation, use:
+
+    heaptrack --raw --output /path/to/profile /path/to/application [arguments...]
+    heaptrack --interpret /path/to/profile.raw.zst
+    heaptrack_print /path/to/profile.zst
+
+The target application must permit `DYLD_INSERT_LIBRARIES`. System executables and applications
+using SIP, the hardened runtime or library validation may reject the preload library. Use an
+unrestricted development build when testing such applications. The macOS ARM64 configuration is
+tested in CI.
+
 #### Compile `heaptrack_gui` on macOS using homebrew
 
 `heaptrack_print` and `heaptrack_gui` can be built on platforms other than Linux, using the dependencies mentioned above.
