@@ -19,6 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify supported architecture
+        run: test "$(uname -m)" = arm64
+
       - name: Install dependencies
         run: brew install boost ninja zstd
 
