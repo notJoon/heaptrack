@@ -361,8 +361,10 @@ pipe=
 ready_file=
 interpreted_pipe=
 background_pids=
+application_pid=
 
 cleanup_runtime() {
+    [ -n "$application_pid" ] && kill "$application_pid" 2> /dev/null || true
     for background_pid in $background_pids; do
         kill "$background_pid" 2> /dev/null || true
     done
@@ -504,12 +506,30 @@ if [ -z "$debug" ] && [ -z "$pid" ]; then
   fi
   if [ "$platform" = "Darwin" ]; then
     DYLD_INSERT_LIBRARIES="$LIBHEAPTRACK_PRELOAD${DYLD_INSERT_LIBRARIES:+:$DYLD_INSERT_LIBRARIES}" \
-      DUMP_HEAPTRACK_OUTPUT="$pipe" DUMP_HEAPTRACK_READY="$ready_file" "$client" "$@"
+      DUMP_HEAPTRACK_OUTPUT="$pipe" DUMP_HEAPTRACK_READY="$ready_file" "$client" "$@" &
+    application_pid=$!
+    ready_attempts=0
+    while [ ! -s "$ready_file" ] && kill -0 "$application_pid" 2> /dev/null && [ "$ready_attempts" -lt 50 ]; do
+      sleep 0.1
+      ready_attempts=$((ready_attempts + 1))
+    done
+    if [ ! -s "$ready_file" ]; then
+      echo "heaptrack: macOS ignored DYLD_INSERT_LIBRARIES; System Integrity Protection may block this executable" >&2
+      kill "$application_pid" 2> /dev/null || true
+      wait "$application_pid" 2> /dev/null || true
+      application_pid=
+      cleanup_runtime
+      EXIT_CODE=1
+    else
+      wait "$application_pid"
+      EXIT_CODE=$?
+      application_pid=
+    fi
   else
     LD_PRELOAD="$asan_ld_preload$LIBHEAPTRACK_PRELOAD${LD_PRELOAD:+:$LD_PRELOAD}" \
       DUMP_HEAPTRACK_OUTPUT="$pipe" "$client" "$@"
+    EXIT_CODE=$?
   fi
-  EXIT_CODE=$?
 else
   if [ -z "$pid" ]; then
     if [ -z ${quiet} ]; then
@@ -555,7 +575,7 @@ else
   fi
 fi
 
-if [ "$platform" = "Darwin" ] && [ -z "$pid" ] && [ ! -s "$ready_file" ]; then
+if [ "$platform" = "Darwin" ] && [ -n "$debug" ] && [ -z "$pid" ] && [ ! -s "$ready_file" ]; then
   echo "heaptrack: macOS ignored DYLD_INSERT_LIBRARIES; System Integrity Protection may block this executable" >&2
   cleanup_runtime
   EXIT_CODE=1

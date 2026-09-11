@@ -48,3 +48,16 @@ if sip_output=$("$launcher" --raw --quiet --output "$sip_output_base" /usr/bin/t
     exit 1
 fi
 echo "$sip_output" | grep -F "System Integrity Protection may block this executable"
+
+started=$(date +%s)
+if timeout_output=$("$launcher" --raw --quiet --output "$sip_output_base-timeout" /bin/sleep 10 2>&1); then
+    echo "heaptrack unexpectedly waited for a SIP-protected executable"
+    exit 1
+fi
+test "$(($(date +%s) - started))" -lt 9
+echo "$timeout_output" | grep -F "System Integrity Protection may block this executable"
+
+stress_output_base="@CMAKE_CURRENT_BINARY_DIR@/tst_macos_stress"
+rm -f "$stress_output_base.raw.gz" "$stress_output_base.raw.zst"
+"$launcher" --raw --quiet --output "$stress_output_base" "$client" --stress
+test -s "$stress_output_base.raw.gz" || test -s "$stress_output_base.raw.zst"

@@ -8,6 +8,7 @@
 
 #include <dlfcn.h>
 #include <mach-o/loader.h>
+#include <unistd.h>
 
 #include <cstring>
 
@@ -89,6 +90,10 @@ bool MachModuleCache::addImage(const mach_header* header, intptr_t slide)
         available->active = true;
     }
     pthread_mutex_unlock(&m_mutex);
+    if (!available) {
+        static constexpr char warning[] = "heaptrack: Mach-O module cache capacity exceeded; module ignored\n";
+        (void)write(STDERR_FILENO, warning, sizeof(warning) - 1);
+    }
     return available != nullptr;
 }
 

@@ -7,10 +7,69 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <malloc/malloc.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
+
+static void* stress_allocations(void* context)
+{
+    const time_t deadline = *(const time_t*)context;
+    size_t size = 1;
+    while (time(NULL) < deadline) {
+        void* pointer = malloc(size);
+        if (pointer == NULL) {
+            return pointer;
+        }
+        *(volatile unsigned char*)pointer = 0;
+        free(pointer);
+        size = size % 1024 + 1;
+    }
+    return context;
+}
+
+static int test_stress(void)
+{
+    const time_t deadline = time(NULL) + 2;
+    pthread_t threads[4];
+    for (size_t i = 0; i < 4; ++i) {
+        if (pthread_create(&threads[i], NULL, &stress_allocations, (void*)&deadline) != 0) {
+            return EXIT_FAILURE;
+        }
+    }
+
+    const pid_t child = fork();
+    if (child == 0) {
+        execl("/usr/bin/true", "true", NULL);
+        _exit(EXIT_FAILURE);
+    }
+    if (child == -1) {
+        return EXIT_FAILURE;
+    }
+
+    for (size_t i = 0; i < 2000; ++i) {
+        void* module = dlopen(HEAPTRACK_TEST_DYLIB, RTLD_NOW | RTLD_LOCAL);
+        if (module == NULL || dlclose(module) != 0) {
+            return EXIT_FAILURE;
+        }
+    }
+
+    int child_status = 0;
+    if (waitpid(child, &child_status, 0) != child || !WIFEXITED(child_status) || WEXITSTATUS(child_status) != 0) {
+        return EXIT_FAILURE;
+    }
+    for (size_t i = 0; i < 4; ++i) {
+        void* result = NULL;
+        if (pthread_join(threads[i], &result) != 0 || result == NULL) {
+            return EXIT_FAILURE;
+        }
+    }
+    return EXIT_SUCCESS;
+}
 
 static void report(const char* allocator, void* pointer)
 {
@@ -120,6 +179,9 @@ int main(int argc, char** argv)
     }
     if (argc == 2 && strcmp(argv[1], "--darwin-allocators") == 0) {
         return test_darwin_allocators();
+    }
+    if (argc == 2 && strcmp(argv[1], "--stress") == 0) {
+        return test_stress();
     }
 
     void* pointer = malloc(0x12341);

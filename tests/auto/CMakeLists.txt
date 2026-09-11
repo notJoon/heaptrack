@@ -75,6 +75,9 @@ endif()
 
 if (APPLE)
     add_executable(tst_macos_preload_client tst_macos_preload_client.c)
+    target_compile_definitions(tst_macos_preload_client PRIVATE
+        HEAPTRACK_TEST_DYLIB="$<TARGET_FILE:testlib_indirect>")
+    add_dependencies(tst_macos_preload_client testlib_indirect)
     set_target_properties(tst_macos_preload_client PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/${BIN_INSTALL_DIR}"
     )

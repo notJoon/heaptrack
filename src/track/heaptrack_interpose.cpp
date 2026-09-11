@@ -80,13 +80,15 @@ void reportReady()
  */
 void initialize()
 {
-    heaptrack_init(
+    if (!heaptrack_init(
         getenv("DUMP_HEAPTRACK_OUTPUT"),
         [] {
             unsetenv("DYLD_INSERT_LIBRARIES");
             unsetenv("DUMP_HEAPTRACK_OUTPUT");
         },
-        nullptr, &trackingStopped);
+        nullptr, &trackingStopped)) {
+        return;
+    }
     atexit(&shutdownTracking);
     isInitialized.store(true, std::memory_order_release);
     reportReady();

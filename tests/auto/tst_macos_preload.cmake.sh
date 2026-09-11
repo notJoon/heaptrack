@@ -10,6 +10,13 @@ pointer_file="@CMAKE_CURRENT_BINARY_DIR@/tst_macos_preload.pointers"
 preload_library="@PROJECT_BINARY_DIR@/@LIB_INSTALL_DIR@/heaptrack/libheaptrack_preload@CMAKE_SHARED_LIBRARY_SUFFIX@"
 client="@PROJECT_BINARY_DIR@/@BIN_INSTALL_DIR@/tst_macos_preload_client"
 
+ready_file="@CMAKE_CURRENT_BINARY_DIR@/tst_macos_preload.ready"
+rm -f "$ready_file"
+: > "$ready_file"
+DYLD_INSERT_LIBRARIES="$preload_library" DUMP_HEAPTRACK_OUTPUT="/dev/null/heaptrack.raw" \
+    DUMP_HEAPTRACK_READY="$ready_file" "$client" > /dev/null 2>&1
+test ! -s "$ready_file"
+
 rm -f "$raw_file" "$pointer_file"
 DYLD_INSERT_LIBRARIES="$preload_library" DUMP_HEAPTRACK_OUTPUT="$raw_file" "$client" > "$pointer_file"
 

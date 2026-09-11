@@ -356,13 +356,13 @@ public:
         lock().unlock();
     }
 
-    void initialize(const char* fileName, heaptrack_callback_t initBeforeCallback,
+    bool initialize(const char* fileName, heaptrack_callback_t initBeforeCallback,
                     heaptrack_callback_initialized_t initAfterCallback, heaptrack_callback_t stopCallback)
     {
         debugLog<MinimalOutput>("initializing: %s", fileName);
         if (s_data) {
             debugLog<MinimalOutput>("%s", "already initialized");
-            return;
+            return true;
         }
 
         if (initBeforeCallback) {
@@ -412,7 +412,7 @@ public:
             if (stopCallback) {
                 stopCallback();
             }
-            return;
+            return false;
         }
 
         s_data = new LockedData(out, stopCallback);
@@ -431,6 +431,7 @@ public:
         }
 
         debugLog<MinimalOutput>("%s", "initialization done");
+        return true;
     }
 
     void shutdown()
@@ -989,7 +990,7 @@ static void heaptrack_realloc_impl(void* ptr_in, size_t size, void* ptr_out)
 
 extern "C" {
 
-void heaptrack_init(const char* outputFileName, heaptrack_callback_t initBeforeCallback,
+bool heaptrack_init(const char* outputFileName, heaptrack_callback_t initBeforeCallback,
                     heaptrack_callback_initialized_t initAfterCallback, heaptrack_callback_t stopCallback)
 {
     RecursionGuard guard;
@@ -999,10 +1000,12 @@ void heaptrack_init(const char* outputFileName, heaptrack_callback_t initBeforeC
 
     debugLog<MinimalOutput>("heaptrack_init(%s)", outputFileName);
 
-    POTENTIALLY_UNUSED auto ret = HeapTrack::op(guard, [&](HeapTrack& heaptrack) {
-        heaptrack.initialize(outputFileName, initBeforeCallback, initAfterCallback, stopCallback);
+    bool initialized = false;
+    const auto ret = HeapTrack::op(guard, [&](HeapTrack& heaptrack) {
+        initialized = heaptrack.initialize(outputFileName, initBeforeCallback, initAfterCallback, stopCallback);
     });
     assert(ret);
+    return ret && initialized;
 }
 
 void heaptrack_stop()

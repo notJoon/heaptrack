@@ -29,6 +29,7 @@
 bool initBeforeCalled = false;
 bool initAfterCalled = false;
 bool stopCalled = false;
+bool failedInitAfterCalled = false;
 
 namespace {
 std::atomic<bool> reallocCallbackEntered {false};
@@ -47,12 +48,18 @@ void* blockingRealloc(void*, size_t, void*)
 
 using namespace std;
 
+TEST_CASE ("initialization reports output failures") {
+    REQUIRE_FALSE(heaptrack_init("/dev/null/heaptrack.raw", nullptr,
+                                 [](LineWriter&) { failedInitAfterCalled = true; }, nullptr));
+    REQUIRE_FALSE(failedInitAfterCalled);
+}
+
 TEST_CASE ("api") {
     TempFile tmp; // opened/closed by heaptrack_init
 
     SUBCASE("init")
     {
-        heaptrack_init(
+        REQUIRE(heaptrack_init(
             tmp.fileName.c_str(),
             []() {
                 REQUIRE(!initBeforeCalled);
@@ -71,7 +78,7 @@ TEST_CASE ("api") {
                 REQUIRE(initAfterCalled);
                 REQUIRE(!stopCalled);
                 stopCalled = true;
-            });
+            }));
 
         REQUIRE(initBeforeCalled);
         REQUIRE(initAfterCalled);
@@ -217,6 +224,34 @@ TEST_CASE ("Mach-O module cache snapshots") {
         },
         &snapshot));
     REQUIRE(snapshot.count == 0);
+}
+
+TEST_CASE ("Mach-O module cache reports capacity exhaustion") {
+    MachModuleCache cache;
+    vector<mach_header_64> headers(1025);
+    for (auto& header : headers) {
+        header.magic = MH_MAGIC_64;
+    }
+
+    FILE* warnings = tmpfile();
+    REQUIRE(warnings);
+    const int savedStderr = dup(STDERR_FILENO);
+    REQUIRE(savedStderr != -1);
+    REQUIRE(dup2(fileno(warnings), STDERR_FILENO) != -1);
+    bool overflowRejected = false;
+    for (auto& header : headers) {
+        overflowRejected = !cache.addImage(reinterpret_cast<const mach_header*>(&header), 0);
+    }
+    fflush(stderr);
+    REQUIRE(dup2(savedStderr, STDERR_FILENO) != -1);
+    close(savedStderr);
+
+    rewind(warnings);
+    char warning[256] = {};
+    (void)fread(warning, 1, sizeof(warning) - 1, warnings);
+    fclose(warnings);
+    REQUIRE(overflowRejected);
+    REQUIRE(string(warning).find("module cache capacity") != string::npos);
 }
 
 TEST_CASE ("macOS process metadata") {
