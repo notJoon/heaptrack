@@ -149,6 +149,8 @@ if (ECM_ENABLE_SANITIZERS)
 endif()
 
 if (HEAPTRACK_BUILD_TRACK)
+    include(CheckCXXSourceCompiles)
+
     if (HEAPTRACK_USE_LIBUNWIND)
         find_package(Libunwind REQUIRED)
     endif()
@@ -176,6 +178,16 @@ if (HEAPTRACK_BUILD_TRACK)
 
     if (NOT HAVE_PLATFORM_HEADERS)
         message(FATAL_ERROR "You are missing platform headers required to compile heaptrack.")
+    endif()
+
+    if (APPLE)
+        include(CMakePushCheckState)
+        cmake_push_check_state()
+        set(CMAKE_REQUIRED_FLAGS "-Werror=unguarded-availability-new")
+        check_cxx_source_compiles("#include <malloc/malloc.h>
+            int main() { malloc_type_free(nullptr, 0); return 0; }"
+            HEAPTRACK_HAVE_MALLOC_TYPE)
+        cmake_pop_check_state()
     endif()
 endif()
 

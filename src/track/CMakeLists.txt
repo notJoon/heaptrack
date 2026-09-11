@@ -54,6 +54,11 @@ add_library(heaptrack_preload ${HEAPTRACK_PRELOAD_LIBRARY_TYPE}
     ${HEAPTRACK_PLATFORM_SOURCES}
 )
 
+if (APPLE)
+    target_compile_definitions(heaptrack_preload PRIVATE
+        HEAPTRACK_HAVE_MALLOC_TYPE=$<BOOL:${HEAPTRACK_HAVE_MALLOC_TYPE}>)
+endif()
+
 target_link_libraries(heaptrack_preload LINK_PRIVATE
     ${CMAKE_DL_LIBS}
     ${CMAKE_THREAD_LIBS_INIT}

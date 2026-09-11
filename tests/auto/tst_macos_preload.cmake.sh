@@ -66,6 +66,6 @@ while IFS='=:' read -r allocator size pointer; do
     grep -Eq "^\\+ ${size} [0-9a-f]+ ${pointer}$" "$darwin_raw_file"
     grep -Eq "^- ${pointer}$" "$darwin_raw_file"
 done < "$darwin_pointer_file"
-test "$(wc -l < "$darwin_pointer_file")" -eq 19
-test "$(grep -c '^+ ' "$darwin_raw_file")" -eq 19
-test "$(grep -c '^- ' "$darwin_raw_file")" -eq 19
+test "$(wc -l < "$darwin_pointer_file")" -eq @HEAPTRACK_MACOS_ALLOCATOR_COUNT@
+test "$(grep -c '^+ ' "$darwin_raw_file")" -eq @HEAPTRACK_MACOS_ALLOCATOR_COUNT@
+test "$(grep -c '^- ' "$darwin_raw_file")" -eq @HEAPTRACK_MACOS_ALLOCATOR_COUNT@

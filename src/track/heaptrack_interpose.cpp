@@ -267,6 +267,7 @@ void* heaptrackZoneMemalign(malloc_zone_t* zone, size_t alignment, size_t size)
     return pointer;
 }
 
+#if HEAPTRACK_HAVE_MALLOC_TYPE
 /*
  * Records a release made through the typed allocation API.
  */
@@ -292,6 +293,7 @@ void heaptrackTypeZoneFree(malloc_zone_t* zone, void* pointer, malloc_type_id_t 
     malloc_type_zone_free(zone, pointer, typeId);
     errno = savedErrno;
 }
+#endif
 
 /*
  * Connects each macOS allocator symbol to its heaptrack replacement.
@@ -309,7 +311,9 @@ HEAPTRACK_INTERPOSE(heaptrackZoneFree, malloc_zone_free);
 HEAPTRACK_INTERPOSE(heaptrackZoneRealloc, malloc_zone_realloc);
 HEAPTRACK_INTERPOSE(heaptrackZoneValloc, malloc_zone_valloc);
 HEAPTRACK_INTERPOSE(heaptrackZoneMemalign, malloc_zone_memalign);
+#if HEAPTRACK_HAVE_MALLOC_TYPE
 HEAPTRACK_INTERPOSE(heaptrackTypeFree, malloc_type_free);
 HEAPTRACK_INTERPOSE(heaptrackTypeZoneFree, malloc_type_zone_free);
+#endif
 
 }

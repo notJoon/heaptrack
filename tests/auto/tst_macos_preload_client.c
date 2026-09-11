@@ -87,7 +87,6 @@ static int report_allocation(const char* allocator, size_t size, void* pointer)
 
 static int test_darwin_allocators(void)
 {
-    const malloc_type_id_t type_id = 0;
     malloc_zone_t* zone = malloc_default_zone();
     void* pointer;
 
@@ -110,6 +109,8 @@ static int test_darwin_allocators(void)
     CHECK_ALLOCATION("zone_memalign", 0x13005, malloc_zone_memalign(zone, 16, 0x13005));
     malloc_zone_free(zone, pointer);
 
+#if HEAPTRACK_HAVE_MALLOC_TYPE
+    const malloc_type_id_t type_id = 0;
     CHECK_ALLOCATION("type_malloc", 0x13006, malloc_type_malloc(0x13006, type_id));
     malloc_type_free(pointer, type_id);
     CHECK_ALLOCATION("type_calloc", 0x13008, malloc_type_calloc(2, 0x9804, type_id));
@@ -138,6 +139,7 @@ static int test_darwin_allocators(void)
     malloc_type_zone_free(zone, pointer, type_id);
     CHECK_ALLOCATION("type_zone_memalign", 0x13012, malloc_type_zone_memalign(zone, 16, 0x13012, type_id));
     malloc_type_zone_free(zone, pointer, type_id);
+#endif
 
 #undef CHECK_ALLOCATION
     return EXIT_SUCCESS;

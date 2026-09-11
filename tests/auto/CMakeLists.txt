@@ -76,11 +76,17 @@ endif()
 if (APPLE)
     add_executable(tst_macos_preload_client tst_macos_preload_client.c)
     target_compile_definitions(tst_macos_preload_client PRIVATE
+        HEAPTRACK_HAVE_MALLOC_TYPE=$<BOOL:${HEAPTRACK_HAVE_MALLOC_TYPE}>
         HEAPTRACK_TEST_DYLIB="$<TARGET_FILE:testlib_indirect>")
     add_dependencies(tst_macos_preload_client testlib_indirect)
     set_target_properties(tst_macos_preload_client PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/${BIN_INSTALL_DIR}"
     )
+    if (HEAPTRACK_HAVE_MALLOC_TYPE)
+        set(HEAPTRACK_MACOS_ALLOCATOR_COUNT 19)
+    else()
+        set(HEAPTRACK_MACOS_ALLOCATOR_COUNT 6)
+    endif()
     configure_file(tst_macos_preload.cmake.sh ${CMAKE_CURRENT_BINARY_DIR}/tst_macos_preload.sh @ONLY)
     add_test(NAME tst_macos_preload COMMAND /bin/sh ${CMAKE_CURRENT_BINARY_DIR}/tst_macos_preload.sh)
     configure_file(tst_macos_launcher.cmake.sh ${CMAKE_CURRENT_BINARY_DIR}/tst_macos_launcher.sh @ONLY)
